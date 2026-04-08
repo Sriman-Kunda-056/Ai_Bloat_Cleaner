@@ -251,7 +251,12 @@ async def main():
     try:
         # Reset environment
         result = await env.reset()
-        episode_id = result.state.episode_id
+        try:
+            state = await env.state()
+            episode_id = state.episode_id or "unknown"
+        except Exception as e:
+            print(f"[WARNING] Failed to fetch episode state: {e}", file=sys.stderr)
+            episode_id = "unknown"
         log_start(episode_id, "ai_bloat_detector")
 
         step_count = 0
@@ -314,7 +319,7 @@ async def main():
                 break
 
         # Episode complete
-        final_summary = result.observation.episode_summary
+        final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
 
         print(
@@ -332,7 +337,8 @@ async def main():
         print(f"[ERROR] Inference failed: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        await env.close()
+        if "env" in locals():
+            await env.close()
 
 
 if __name__ == "__main__":
