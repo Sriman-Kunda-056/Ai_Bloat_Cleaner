@@ -585,6 +585,9 @@ REWARD_TRUE_NEGATIVE  = +0.30   # skip   + human file
 REWARD_FALSE_NEGATIVE = -0.30   # skip   + AI bloat
 F1_BONUS_MAX          = +3.00   # maximum terminal bonus for perfect F1
 
+# Small process-quality shaping: rewards how well an action matches confidence.
+PROCESS_ALIGNMENT_WEIGHT = 0.25
+
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -625,6 +628,9 @@ class AiBloatDetectorEnvironment(Environment):
         self._tp = self._fp = self._tn = self._fn = 0
         self._bytes_freed = 0
         self._history: List[Dict] = []
+        self._reward_total: float = 0.0
+        self._process_score_total: float = 0.0
+        self._process_steps: int = 0
 
     #  Lifecycle 
 
@@ -640,6 +646,9 @@ class AiBloatDetectorEnvironment(Environment):
         self._tp = self._fp = self._tn = self._fn = 0
         self._bytes_freed = 0
         self._history = []
+        self._reward_total = 0.0
+        self._process_score_total = 0.0
+        self._process_steps = 0
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
         first_fp, _ = self._queue[0] if self._queue else (None, False)
@@ -664,7 +673,13 @@ class AiBloatDetectorEnvironment(Environment):
         act = action.action_type
 
         #  Compute reward 
-        reward, result_msg = self._compute_reward(act, fp, is_bloat)
+        base_reward, result_msg = self._compute_reward(act, fp, is_bloat)
+        process_bonus, process_msg = self._process_reward(act, fp)
+        reward = round(base_reward + process_bonus, 4)
+        self._reward_total = round(self._reward_total + reward, 4)
+        self._process_score_total = round(self._process_score_total + process_bonus, 4)
+        self._process_steps += 1
+        result_msg = f"{result_msg} Process({process_bonus:+.2f}): {process_msg}"
 
         #  Apply action to disk 
         if act == "delete" and self._workspace:
@@ -768,6 +783,26 @@ class AiBloatDetectorEnvironment(Environment):
         f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
         return round(prec, 4), round(rec, 4), round(f1, 4)
 
+    def _process_reward(self, act: str, fp: FileFingerprint) -> Tuple[float, str]:
+        """Reward the quality of decision process, not only final correctness."""
+        p = fp.ai_probability
+        if p >= 0.85:
+            alignment = {"delete": 1.0, "flag": 0.4, "skip": -1.0}.get(act, 0.0)
+            band = "high-confidence bloat"
+        elif p >= 0.60:
+            alignment = {"flag": 1.0, "delete": 0.5, "skip": -0.5}.get(act, 0.0)
+            band = "uncertain / review band"
+        else:
+            alignment = {"skip": 1.0, "flag": 0.2, "delete": -1.0}.get(act, 0.0)
+            band = "likely human"
+
+        # Be slightly conservative on directory deletion unless confidence is very high.
+        if fp.is_directory and act == "delete" and p < 0.95:
+            alignment -= 0.3
+
+        bonus = round(max(-1.0, min(1.0, alignment)) * PROCESS_ALIGNMENT_WEIGHT, 4)
+        return bonus, f"action='{act}' in {band} (ai_probability={p:.2f})"
+
     #  Terminal observation 
 
     def _terminal_obs(
@@ -779,6 +814,8 @@ class AiBloatDetectorEnvironment(Environment):
         prec, rec, f1 = self._metrics()
         f1_bonus = round(F1_BONUS_MAX * f1, 4)
         total_reward = extra_reward + f1_bonus
+        process_avg = round(self._process_score_total / max(self._process_steps, 1), 4)
+        reward_total_with_bonus = round(self._reward_total + f1_bonus, 4)
 
         total_bloat = sum(1 for _, bloat in self._queue if bloat)
         summary = {
@@ -795,6 +832,10 @@ class AiBloatDetectorEnvironment(Environment):
             "f1_score": f1,
             "f1_bonus": f1_bonus,
             "bytes_freed": self._bytes_freed,
+            "process_score_total": self._process_score_total,
+            "process_score_avg": process_avg,
+            "reward_base_total": self._reward_total,
+            "reward_total": reward_total_with_bonus,
             "history": self._history,
         }
 

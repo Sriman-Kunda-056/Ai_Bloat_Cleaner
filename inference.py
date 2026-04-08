@@ -164,15 +164,11 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
 
 def log_start(episode_id: str, env_name: str) -> None:
     """Log episode start."""
-    log = {
-        "type": "START",
-        "timestamp": time.time(),
-        "episode_id": episode_id,
-        "env_name": env_name,
-        "model": MODEL_NAME,
-        "api_base": API_BASE_URL,
-    }
-    print(json.dumps(log))
+    print(
+        f"[START] task={env_name} episode_id={episode_id} "
+        f"timestamp={time.time():.6f} model={MODEL_NAME}",
+        flush=True,
+    )
 
 
 def log_step(
@@ -184,17 +180,12 @@ def log_step(
     ai_probability: float,
 ) -> None:
     """Log a single step."""
-    log = {
-        "type": "STEP",
-        "timestamp": time.time(),
-        "episode_id": episode_id,
-        "step": step_num,
-        "file": file_path,
-        "action": action_type,
-        "reward": reward,
-        "ai_probability": ai_probability,
-    }
-    print(json.dumps(log))
+    safe_file = file_path.replace(" ", "_")
+    print(
+        f"[STEP] episode_id={episode_id} step={step_num} file={safe_file} "
+        f"action={action_type} reward={reward:.4f} ai_probability={ai_probability:.4f}",
+        flush=True,
+    )
 
 
 def log_end(
@@ -203,18 +194,16 @@ def log_end(
     episode_summary: Dict,
 ) -> None:
     """Log episode end."""
-    log = {
-        "type": "END",
-        "timestamp": time.time(),
-        "episode_id": episode_id,
-        "total_steps": total_steps,
-        "f1_score": episode_summary.get("f1_score", 0.0),
-        "bytes_freed": episode_summary.get("bytes_freed", 0),
-        "precision": episode_summary.get("precision", 0.0),
-        "recall": episode_summary.get("recall", 0.0),
-        "reward_total": episode_summary.get("reward_total", 0.0),
-    }
-    print(json.dumps(log))
+    print(
+        f"[END] task=ai_bloat_detector episode_id={episode_id} "
+        f"score={episode_summary.get('f1_score', 0.0):.4f} steps={total_steps} "
+        f"precision={episode_summary.get('precision', 0.0):.4f} "
+        f"recall={episode_summary.get('recall', 0.0):.4f} "
+        f"bytes_freed={episode_summary.get('bytes_freed', 0)} "
+        f"reward_total={episode_summary.get('reward_total', 0.0):.4f} "
+        f"timestamp={time.time():.6f}",
+        flush=True,
+    )
 
 
 # 
