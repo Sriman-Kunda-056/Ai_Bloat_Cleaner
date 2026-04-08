@@ -31,6 +31,7 @@ import os
 import sys
 import time
 import asyncio
+import uuid
 from typing import Dict, Optional
 
 from openai import OpenAI
@@ -250,13 +251,11 @@ async def main():
 
     try:
         # Reset environment
+        # NOTE: StepResult has no .state attribute; episode_id is internal
+        # server state never sent to the client. We generate a local UUID
+        # for structured logging correlation.
         result = await env.reset()
-        try:
-            state = await env.state()
-            episode_id = state.episode_id or "unknown"
-        except Exception as e:
-            print(f"[WARNING] Failed to fetch episode state: {e}", file=sys.stderr)
-            episode_id = "unknown"
+        episode_id = str(uuid.uuid4())
         log_start(episode_id, "ai_bloat_detector")
 
         step_count = 0
@@ -273,39 +272,55 @@ async def main():
 
             file_path = current_item.path
             ai_prob = current_item.ai_probability
-            ai_signals = [
-                {
-                    "signal_type": sig.signal_type,
-                    "description": sig.description,
-                    "confidence": sig.confidence,
-                }
-                for sig in current_item.ai_signals
-            ]
 
-            # Get LLM decision
-            action_type = get_llm_decision(
-                client,
-                file_path,
-                {
-                    "size_bytes": current_item.size_bytes,
-                    "is_directory": current_item.is_directory,
-                    "type": current_item.detected_type,
-                },
-                ai_prob,
-                ai_signals,
-            )
+            # Safely parse AI signals (network/parsing can fail)
+            try:
+                ai_signals = [
+                    {
+                        "signal_type": sig.signal_type,
+                        "description": sig.description,
+                        "confidence": sig.confidence,
+                    }
+                    for sig in current_item.ai_signals
+                ]
+            except Exception as e:
+                print(f"[WARNING] Failed to parse ai_signals at step {step_count}: {e}", file=sys.stderr)
+                ai_signals = []
 
-            # Execute action
+            # Get LLM decision (wrapped: network call can fail)
+            try:
+                action_type = get_llm_decision(
+                    client,
+                    file_path,
+                    {
+                        "size_bytes": current_item.size_bytes,
+                        "is_directory": current_item.is_directory,
+                        "type": current_item.detected_type,
+                    },
+                    ai_prob,
+                    ai_signals,
+                )
+            except Exception as e:
+                print(f"[WARNING] LLM decision error at step {step_count}: {e}", file=sys.stderr)
+                # Fallback: use probability threshold
+                action_type = "delete" if ai_prob > 0.85 else "flag" if ai_prob > 0.6 else "skip"
+
+            # Execute action (wrapped: env step can fail)
             action = BloatAction(action_type=action_type)
-            result = await env.step(action)
+            try:
+                result = await env.step(action)
+            except Exception as e:
+                print(f"[ERROR] env.step() failed at step {step_count}: {e}", file=sys.stderr)
+                break
 
             # Log step
+            # NOTE: reward lives on StepResult, not on the observation dict.
             log_step(
                 episode_id,
                 step_count,
                 file_path,
                 action_type,
-                result.observation.reward,
+                result.reward or 0.0,
                 ai_prob,
             )
 
@@ -318,7 +333,7 @@ async def main():
                 )
                 break
 
-        # Episode complete
+        # Episode complete — episode_summary may be None if we broke out early
         final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
 
@@ -337,8 +352,7 @@ async def main():
         print(f"[ERROR] Inference failed: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        if "env" in locals():
-            await env.close()
+        await env.close()
 
 
 if __name__ == "__main__":
