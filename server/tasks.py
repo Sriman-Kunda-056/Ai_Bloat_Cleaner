@@ -73,6 +73,14 @@ OLD_FILE_AGE_DAYS: float = 14.0
 # Directories: raise delete threshold — one wrong delete can cascade.
 DIRECTORY_DELETE_THRESHOLD_BUMP: float = 0.08
 
+# Competition requires each task score to be strictly between 0 and 1.
+STRICT_SCORE_EPS: float = 1e-3
+
+
+def _strict_score(value: float) -> float:
+    """Clamp scores to the open interval (0, 1)."""
+    return float(min(1.0 - STRICT_SCORE_EPS, max(STRICT_SCORE_EPS, value)))
+
 
 # ---------------------------------------------------------------------------
 # Core scoring function — shared across all tasks
@@ -227,10 +235,12 @@ async def _grader_precision(
         summary = result.observation.episode_summary or {}
         precision = summary.get("precision", 0.0)
 
+        score = _strict_score(precision)
         return (
-            precision,
+            score,
             {
                 "precision": precision,
+                "score": score,
                 "tp": tp,
                 "fp": fp,
                 "steps": steps,
@@ -289,10 +299,12 @@ async def _grader_recall(
         summary = result.observation.episode_summary or {}
         recall = summary.get("recall", 0.0)
 
+        score = _strict_score(recall)
         return (
-            recall,
+            score,
             {
                 "recall": recall,
+                "score": score,
                 "tp": tp,
                 "fn": fn,
                 "steps": steps,
@@ -364,10 +376,12 @@ async def _grader_f1_score(
         summary = result.observation.episode_summary or {}
         f1 = summary.get("f1_score", 0.0)
 
+        score = _strict_score(f1)
         return (
-            f1,
+            score,
             {
                 "f1_score": f1,
+                "score": score,
                 "precision": summary.get("precision", 0.0),
                 "recall": summary.get("recall", 0.0),
                 "steps": steps,
@@ -441,8 +455,9 @@ async def _grader_efficiency(
         step_penalty = max(0.0, (steps - half_budget) / half_budget) * 0.10
         efficiency_score = max(0.0, recall_score - step_penalty)
 
+        score = _strict_score(efficiency_score)
         return (
-            efficiency_score,
+            score,
             {
                 "bytes_freed": bytes_freed,
                 "total_ai_bytes": total_ai_bytes,
@@ -452,6 +467,7 @@ async def _grader_efficiency(
                 "recall_score": round(recall_score, 4),
                 "step_penalty": round(step_penalty, 4),
                 "efficiency_score": efficiency_score,
+                "score": score,
             },
         )
     finally:
@@ -485,15 +501,17 @@ async def _run_all_graders(base_url: str = "http://localhost:8000") -> Dict:
     for name, grader in tasks:
         try:
             score, details = await grader(base_url)
-            results[name] = {"score": score, "details": details}
+            results[name] = {"score": _strict_score(score), "details": details}
         except Exception as e:
-            results[name] = {"score": 0.0, "error": str(e)}
+            # Keep score in open interval to satisfy validator constraints.
+            results[name] = {"score": STRICT_SCORE_EPS, "error": str(e)}
 
     scores = [
         v["score"] for v in results.values()
         if isinstance(v, dict) and "score" in v
     ]
-    results["overall_score"] = sum(scores) / len(scores) if scores else 0.0
+    overall = sum(scores) / len(scores) if scores else STRICT_SCORE_EPS
+    results["overall_score"] = _strict_score(overall)
 
     return results
 
