@@ -63,9 +63,14 @@ def compute_reward(
         Tuple of (reward: float, integrity_broken: bool, feedback: str).
         integrity_broken=True means the episode should be truncated.
     """
-    from env.file_system import (  # local import to avoid circular refs
-        ACTION_KEEP, ACTION_DELETE, ACTION_CONSOLIDATE, ACTION_COMPRESS,
-    )
+    # from env.file_system import (  # local import to avoid circular refs
+    #     ACTION_KEEP, ACTION_DELETE, ACTION_CONSOLIDATE, ACTION_COMPRESS,
+    # )
+
+    ACTION_KEEP = 0
+    ACTION_DELETE = 1
+    ACTION_CONSOLIDATE = 2
+    ACTION_COMPRESS = 3
 
     label       = file_meta["label"]           # 'bloat' or 'human'
     is_critical = file_meta["is_critical"]

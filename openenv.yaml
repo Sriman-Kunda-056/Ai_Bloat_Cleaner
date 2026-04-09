@@ -8,7 +8,7 @@ version: "1.0.0"
 author: Meta x Scaler
 type: space
 runtime: fastapi
-app: server.app:app
+app: server/app.py:app
 port: 8000
 
 observation_space:
@@ -30,12 +30,16 @@ action_space:
 tasks:
   - id: task_1_precision
     description: Maximize precision by minimizing false positives.
+    grader: grader_precision
   - id: task_2_recall
     description: Maximize recall by minimizing false negatives.
+    grader: grader_recall
   - id: task_3_f1
     description: Balance precision and recall with high F1-score.
+    grader: grader_f1_score
   - id: task_4_efficiency
     description: Maximize bytes freed per step under a limited budget.
+    grader: grader_efficiency
 
 scoring:
   reward_range: [0.0, 1.0]
@@ -43,4 +47,4 @@ scoring:
     open_interval: true
     min_exclusive: 0.0
     max_exclusive: 1.0
-  score_formula: mean(task_scores)      
+  score_formula: mean(task_scores)

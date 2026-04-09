@@ -1,31 +1,10 @@
 """
 Inference Script for AI Digital Bloat Detector.
 
-Uses OpenAI-compatible client to make LLM-based decisions on file classification.
+Uses OpenAI-compatible async client to make LLM-based decisions on file classification.
 Follows mandatory [START], [STEP], [END] structured logging format.
-
-Environment Variables:
-    HF_TOKEN        - HuggingFace token (auto-injected in HF Spaces; used for HF Router API)
-    OPENAI_API_KEY  - OpenAI key (alternative when using OpenAI directly)
-    API_BASE_URL    - LLM endpoint. Defaults to HF Router API when HF_TOKEN is set,
-                      or https://api.openai.com/v1 when OPENAI_API_KEY is set.
-    MODEL_NAME      - Model identifier. Default: Qwen/Qwen2.5-72B-Instruct (HF) or gpt-4o-mini (OpenAI)
-    BLOAT_DETECTOR_URL - Environment server URL. Default: http://localhost:8000
-
-Usage:
-    # On HuggingFace Spaces — HF_TOKEN is injected automatically, no action needed.
-
-    # Local with HF Router API:
-    HF_TOKEN=hf_xxx python inference.py
-
-    # Local with OpenAI:
-    OPENAI_API_KEY=sk-xxx python inference.py
-
-    # Local with custom endpoint:
-    HF_TOKEN=hf_xxx API_BASE_URL=https://router.huggingface.co/v1 MODEL_NAME=Qwen/Qwen2.5-72B-Instruct python inference.py
 """
 
-import json
 import os
 import sys
 import time
@@ -33,19 +12,16 @@ import asyncio
 import uuid
 from typing import Dict, Optional, Tuple
 
-from openai import OpenAI
+from openai import AsyncOpenAI   # ← FIXED: async client
 
 try:
-    # Preferred in submission workspace where files are at repository root.
     from client import AiBloatDetector
     from models import BloatAction
 except (ModuleNotFoundError, ImportError):
     try:
-        # Fallback for installed package layouts.
         from my_env.client import AiBloatDetector
         from my_env.models import BloatAction
     except (ModuleNotFoundError, ImportError):
-        # Final fallback for package roots that re-export these symbols.
         from my_env import AiBloatDetector, BloatAction
 
 # -----------------------------------------------------------------------------
@@ -56,35 +32,28 @@ HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 _api_base_url_env = os.getenv("API_BASE_URL", "").strip()
 
-# Auto-select sensible defaults depending on which credential is present.
 _using_hf = bool(HF_TOKEN) and not OPENAI_API_KEY
 
 _default_base_url = (
     "https://router.huggingface.co/v1" if _using_hf else "https://api.openai.com/v1"
 )
 if _api_base_url_env and "api-inference.huggingface.co" in _api_base_url_env:
-    # Auto-migrate old HF endpoint to avoid HTTP 410 errors.
     _api_base_url_env = _api_base_url_env.replace(
         "https://api-inference.huggingface.co",
         "https://router.huggingface.co",
     )
-_default_model = (
-    "Qwen/Qwen2.5-72B-Instruct" if _using_hf else "gpt-4o-mini"
-)
+
+_default_model = "Qwen/Qwen2.5-72B-Instruct" if _using_hf else "gpt-4o-mini"
 
 API_BASE_URL = _api_base_url_env or _default_base_url
 MODEL_NAME = os.getenv("MODEL_NAME", _default_model)
-
-# Server endpoint
 BLOAT_DETECTOR_URL = os.getenv("BLOAT_DETECTOR_URL", "http://localhost:8000")
 
-# Inference limits
 MAX_STEPS = 500
 DECISION_TIMEOUT_SECS = 30
 
 
 def _fallback_decision(ai_probability: float) -> str:
-    """Deterministic fallback when LLM is unavailable."""
     if ai_probability > 0.8:
         return "delete"
     if ai_probability > 0.5:
@@ -93,43 +62,30 @@ def _fallback_decision(ai_probability: float) -> str:
 
 
 def _is_fatal_llm_error(error_text: str) -> bool:
-    """Detect provider/auth/config errors that should disable further LLM calls."""
     fatal_markers = (
-        "error code: 401",
-        "error code: 403",
-        "error code: 404",
-        "error code: 410",
-        "invalid api key",
-        "authentication",
-        "not supported",
-        "model not found",
+        "error code: 401", "error code: 403", "error code: 404",
+        "error code: 410", "invalid api key", "authentication",
+        "not supported", "model not found",
     )
-    lower = error_text.lower()
-    return any(marker in lower for marker in fatal_markers)
+    return any(m in error_text.lower() for m in fatal_markers)
 
 
 def _select_api_key() -> str:
-    """Choose the right key for the configured backend."""
     base = API_BASE_URL.lower()
-
     if "openai.com" in base and OPENAI_API_KEY:
         return OPENAI_API_KEY
     if "huggingface.co" in base and HF_TOKEN:
         return HF_TOKEN
-
-    # Generic OpenAI-compatible endpoint fallback.
     return OPENAI_API_KEY or HF_TOKEN
 
 
 def _age_days(timestamp: float) -> float:
-    """Return item age in days from a Unix timestamp."""
     if not timestamp:
         return 0.0
     return max(0.0, (time.time() - timestamp) / 86400.0)
 
 
 def _signal_counts(ai_signals: list) -> Tuple[int, int, int]:
-    """Summarize signal strength for prompt conditioning."""
     high = medium = low = 0
     for sig in ai_signals:
         confidence = float(sig.get("confidence", 0.0))
@@ -143,13 +99,12 @@ def _signal_counts(ai_signals: list) -> Tuple[int, int, int]:
 
 
 def _build_feature_summary(file_info: Dict, ai_probability: float, ai_signals: list) -> str:
-    """Build a compact feature summary that adds derived evidence to the prompt."""
     size_bytes = int(file_info.get("size_bytes", 0) or 0)
     child_count = int(file_info.get("child_count", 0) or 0)
     extension = str(file_info.get("extension", "") or "")
     is_directory = bool(file_info.get("is_directory", False))
-    is_recent = _age_days(float(file_info.get("mtime", 0.0) or 0.0)) < 0.5
     age_days = _age_days(float(file_info.get("mtime", 0.0) or 0.0))
+    is_recent = age_days < 0.5
     type_mismatch = bool(file_info.get("type_mismatch", False))
     high_signals, medium_signals, low_signals = _signal_counts(ai_signals)
 
@@ -179,37 +134,21 @@ def _build_feature_summary(file_info: Dict, ai_probability: float, ai_signals: l
 
 
 # ---------------------------------------------------------------------------
-# LLM Decision Engine
+# LLM Decision Engine — FIXED: async
 # ---------------------------------------------------------------------------
 
-
-def get_llm_decision(
-    client: OpenAI,
+async def get_llm_decision(
+    client: AsyncOpenAI,          # ← AsyncOpenAI, not OpenAI
     file_path: str,
     file_info: Dict,
     ai_probability: float,
     ai_signals: list,
 ) -> Tuple[str, Optional[str]]:
-    """
-    Query LLM to classify the file as delete/flag/skip.
-
-    Args:
-        client: Initialized OpenAI client
-        file_path: Relative path of the file
-        file_info: FileFingerprint details (size, type, etc.)
-        ai_probability: Composite AI-generation probability [0, 1]
-        ai_signals: List of AI signal objects with confidence scores
-
-    Returns:
-        (action_type, error_message)
-    """
-    signal_summary = "\n".join(
-        [
-            f"  - {sig.get('signal_type', 'UNKNOWN')}: {sig.get('description', '')} "
-            f"(confidence: {sig.get('confidence', 0):.2f})"
-            for sig in ai_signals
-        ]
-    )
+    signal_summary = "\n".join([
+        f"  - {sig.get('signal_type', 'UNKNOWN')}: {sig.get('description', '')} "
+        f"(confidence: {sig.get('confidence', 0):.2f})"
+        for sig in ai_signals
+    ])
 
     feature_summary = _build_feature_summary(file_info, ai_probability, ai_signals)
 
@@ -237,7 +176,7 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
 """
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(   # ← await, non-blocking
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
@@ -245,10 +184,8 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
             timeout=DECISION_TIMEOUT_SECS,
         )
         decision = response.choices[0].message.content.strip().lower()
-
         if decision in ("delete", "flag", "skip"):
             return decision, None
-
         return _fallback_decision(ai_probability), "unexpected model output"
     except Exception as e:
         return _fallback_decision(ai_probability), str(e)
@@ -258,7 +195,6 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
 # Structured Logging
 # ---------------------------------------------------------------------------
 
-
 def log_start(episode_id: str, env_name: str) -> None:
     print(
         f"[START] task={env_name} episode_id={episode_id} "
@@ -267,14 +203,7 @@ def log_start(episode_id: str, env_name: str) -> None:
     )
 
 
-def log_step(
-    episode_id: str,
-    step_num: int,
-    file_path: str,
-    action_type: str,
-    reward: float,
-    ai_probability: float,
-) -> None:
+def log_step(episode_id, step_num, file_path, action_type, reward, ai_probability):
     safe_file = file_path.replace(" ", "_")
     print(
         f"[STEP] episode_id={episode_id} step={step_num} file={safe_file} "
@@ -283,11 +212,7 @@ def log_step(
     )
 
 
-def log_end(
-    episode_id: str,
-    total_steps: int,
-    episode_summary: Dict,
-) -> None:
+def log_end(episode_id, total_steps, episode_summary):
     print(
         f"[END] task=ai_bloat_detector episode_id={episode_id} "
         f"score={episode_summary.get('f1_score', 0.0):.4f} steps={total_steps} "
@@ -304,34 +229,23 @@ def log_end(
 # Main Inference Loop
 # ---------------------------------------------------------------------------
 
-
 async def main():
-    """Run inference on the bloat detector environment."""
-
     api_key = _select_api_key()
     if not api_key:
         print(
             "[ERROR] No API key found.\n"
-            "  On HuggingFace Spaces: HF_TOKEN is injected automatically — nothing to do.\n"
-            "  Locally: set HF_TOKEN (for HF Router API) or OPENAI_API_KEY (for OpenAI).\n"
-            "  Example: HF_TOKEN=hf_xxx python inference.py",
+            "  On HuggingFace Spaces: HF_TOKEN is injected automatically.\n"
+            "  Locally: set HF_TOKEN or OPENAI_API_KEY.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    client = OpenAI(api_key=api_key, base_url=API_BASE_URL)
+    client = AsyncOpenAI(api_key=api_key, base_url=API_BASE_URL)  # ← AsyncOpenAI
     llm_disabled_reason: Optional[str] = None
+    env = None   # ← FIXED: initialise to None before try
 
     try:
         env = AiBloatDetector(base_url=BLOAT_DETECTOR_URL)
-    except Exception as e:
-        print(
-            f"[ERROR] Failed to connect to environment at {BLOAT_DETECTOR_URL}: {e}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    try:
         result = await env.reset()
         episode_id = str(uuid.uuid4())
         log_start(episode_id, "ai_bloat_detector")
@@ -362,9 +276,8 @@ async def main():
                 ai_signals = []
 
             if llm_disabled_reason is None:
-                action_type, llm_error = get_llm_decision(
-                    client,
-                    file_path,
+                action_type, llm_error = await get_llm_decision(  # ← await
+                    client, file_path,
                     {
                         "size_bytes": current_item.size_bytes,
                         "is_directory": current_item.is_directory,
@@ -376,8 +289,7 @@ async def main():
                         "atime": current_item.atime,
                         "type_mismatch": current_item.type_mismatch,
                     },
-                    ai_prob,
-                    ai_signals,
+                    ai_prob, ai_signals,
                 )
                 if llm_error and _is_fatal_llm_error(llm_error):
                     llm_disabled_reason = llm_error
@@ -387,27 +299,31 @@ async def main():
             action = BloatAction(action_type=action_type)
             try:
                 result = await env.step(action)
-            except Exception:
+            except Exception as e:
+                print(f"[WARN] step failed: {e}", file=sys.stderr)
                 break
 
-            log_step(
-                episode_id,
-                step_count,
-                file_path,
-                action_type,
-                result.reward or 0.0,
-                ai_prob,
-            )
+            log_step(episode_id, step_count, file_path, action_type,
+                     result.reward or 0.0, ai_prob)
 
             elapsed = time.time() - start_time
-            if elapsed > 1200:  # 20 minutes
+            if elapsed > 1200:  # 20-minute hard limit
+                # ← FIXED: send done to get a real episode_summary
+                try:
+                    result = await env.step(BloatAction(action_type="done"))
+                except Exception:
+                    pass
                 break
 
-        # --- Episode complete ---
+        # Ensure we have a terminal summary
+        if not result.observation.done:
+            try:
+                result = await env.step(BloatAction(action_type="done"))
+            except Exception:
+                pass
+
         final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
-
-        return
 
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user", file=sys.stderr)
@@ -416,7 +332,8 @@ async def main():
         print(f"[ERROR] Inference failed: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        await env.close()
+        if env is not None:       # ← FIXED: guard against uninitialized env
+            await env.close()
 
 
 if __name__ == "__main__":
