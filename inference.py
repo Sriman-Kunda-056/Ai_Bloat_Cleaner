@@ -36,10 +36,17 @@ from typing import Dict, Optional, Tuple
 from openai import OpenAI
 
 try:
-    from my_env import AiBloatDetector, BloatAction
-except (ModuleNotFoundError, ImportError):
+    # Preferred in submission workspace where files are at repository root.
     from client import AiBloatDetector
     from models import BloatAction
+except (ModuleNotFoundError, ImportError):
+    try:
+        # Fallback for installed package layouts.
+        from my_env.client import AiBloatDetector
+        from my_env.models import BloatAction
+    except (ModuleNotFoundError, ImportError):
+        # Final fallback for package roots that re-export these symbols.
+        from my_env import AiBloatDetector, BloatAction
 
 # -----------------------------------------------------------------------------
 # Configuration
