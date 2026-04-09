@@ -37,24 +37,9 @@ from openai import OpenAI
 
 try:
     from my_env import AiBloatDetector, BloatAction
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     from client import AiBloatDetector
     from models import BloatAction
-
-# ---------------------------------------------------------------------------
-# Import graders so they are available for the evaluator when this module
-# is imported as part of a tasks.py discovery pass.
-# ---------------------------------------------------------------------------
-try:
-    from server.tasks import (
-        grader_efficiency,
-        grader_f1_score,
-        grader_precision,
-        grader_recall,
-        run_all_graders,
-    )
-except Exception:
-    run_all_graders = None  # type: ignore[assignment]
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -308,12 +293,6 @@ def log_end(
     )
 
 
-def log_grader_scores(episode_id: str, scores: Dict) -> None:
-    """Log final grader scores for contest evaluation."""
-    parts = " ".join(f"{k}={v:.6f}" for k, v in scores.items())
-    print(f"[GRADERS] episode_id={episode_id} {parts}", flush=True)
-
-
 # ---------------------------------------------------------------------------
 # Main Inference Loop
 # ---------------------------------------------------------------------------
@@ -420,25 +399,6 @@ async def main():
         # --- Episode complete ---
         final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
-
-        # Run and log grader scores for contest evaluation
-        if run_all_graders is not None:
-            # Build a synthetic episode_result dict that graders understand
-            episode_result = {
-                "observation": {
-                    "episode_summary": {
-                        "true_positives": result.observation.true_positives,
-                        "false_positives": result.observation.false_positives,
-                        "true_negatives": result.observation.true_negatives,
-                        "false_negatives": result.observation.false_negatives,
-                        "step_count": result.observation.step_count,
-                        # reward_total may not be on observation; use accumulated estimate
-                        "reward_total": final_summary.get("reward_total", 0.0),
-                    }
-                }
-            }
-            scores = run_all_graders(episode_result)
-            log_grader_scores(episode_id, scores)
 
         return
 
