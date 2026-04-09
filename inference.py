@@ -1,4 +1,3 @@
-
 """
 Inference Script for AI Digital Bloat Detector.
 
@@ -42,6 +41,21 @@ except ModuleNotFoundError:
     from client import AiBloatDetector
     from models import BloatAction
 
+# ---------------------------------------------------------------------------
+# Import graders so they are available for the evaluator when this module
+# is imported as part of a tasks.py discovery pass.
+# ---------------------------------------------------------------------------
+try:
+    from server.tasks import (
+        grader_efficiency,
+        grader_f1_score,
+        grader_precision,
+        grader_recall,
+        run_all_graders,
+    )
+except Exception:
+    run_all_graders = None  # type: ignore[assignment]
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -51,8 +65,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 _api_base_url_env = os.getenv("API_BASE_URL", "").strip()
 
 # Auto-select sensible defaults depending on which credential is present.
-# HF_TOKEN → HuggingFace Router API (OpenAI-compatible)
-# OPENAI_API_KEY → OpenAI directly
 _using_hf = bool(HF_TOKEN) and not OPENAI_API_KEY
 
 _default_base_url = (
@@ -174,9 +186,9 @@ def _build_feature_summary(file_info: Dict, ai_probability: float, ai_signals: l
     )
 
 
-# 
+# ---------------------------------------------------------------------------
 # LLM Decision Engine
-# 
+# ---------------------------------------------------------------------------
 
 
 def get_llm_decision(
@@ -199,7 +211,6 @@ def get_llm_decision(
     Returns:
         (action_type, error_message)
     """
-    # Format signals for the prompt
     signal_summary = "\n".join(
         [
             f"  - {sig.get('signal_type', 'UNKNOWN')}: {sig.get('description', '')} "
@@ -243,23 +254,20 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
         )
         decision = response.choices[0].message.content.strip().lower()
 
-        # Validate response
         if decision in ("delete", "flag", "skip"):
             return decision, None
 
-        # Fallback if model returns unexpected text.
         return _fallback_decision(ai_probability), "unexpected model output"
     except Exception as e:
         return _fallback_decision(ai_probability), str(e)
 
 
-# 
+# ---------------------------------------------------------------------------
 # Structured Logging
-# 
+# ---------------------------------------------------------------------------
 
 
 def log_start(episode_id: str, env_name: str) -> None:
-    """Log episode start."""
     print(
         f"[START] task={env_name} episode_id={episode_id} "
         f"timestamp={time.time():.6f} model={MODEL_NAME}",
@@ -275,7 +283,6 @@ def log_step(
     reward: float,
     ai_probability: float,
 ) -> None:
-    """Log a single step."""
     safe_file = file_path.replace(" ", "_")
     print(
         f"[STEP] episode_id={episode_id} step={step_num} file={safe_file} "
@@ -289,7 +296,6 @@ def log_end(
     total_steps: int,
     episode_summary: Dict,
 ) -> None:
-    """Log episode end."""
     print(
         f"[END] task=ai_bloat_detector episode_id={episode_id} "
         f"score={episode_summary.get('f1_score', 0.0):.4f} steps={total_steps} "
@@ -302,15 +308,20 @@ def log_end(
     )
 
 
-# 
+def log_grader_scores(episode_id: str, scores: Dict) -> None:
+    """Log final grader scores for contest evaluation."""
+    parts = " ".join(f"{k}={v:.6f}" for k, v in scores.items())
+    print(f"[GRADERS] episode_id={episode_id} {parts}", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Main Inference Loop
-# 
+# ---------------------------------------------------------------------------
 
 
 async def main():
     """Run inference on the bloat detector environment."""
 
-    # Initialize OpenAI-compatible client
     api_key = _select_api_key()
     if not api_key:
         print(
@@ -325,7 +336,6 @@ async def main():
     client = OpenAI(api_key=api_key, base_url=API_BASE_URL)
     llm_disabled_reason: Optional[str] = None
 
-    # Connect to environment
     try:
         env = AiBloatDetector(base_url=BLOAT_DETECTOR_URL)
     except Exception as e:
@@ -336,10 +346,6 @@ async def main():
         sys.exit(1)
 
     try:
-        # Reset environment
-        # NOTE: StepResult has no .state attribute; episode_id is internal
-        # server state never sent to the client. We generate a local UUID
-        # for structured logging correlation.
         result = await env.reset()
         episode_id = str(uuid.uuid4())
         log_start(episode_id, "ai_bloat_detector")
@@ -347,11 +353,9 @@ async def main():
         step_count = 0
         start_time = time.time()
 
-        # Main loop
         while not result.observation.done and step_count < MAX_STEPS:
             step_count += 1
 
-            # Extract current file info
             current_item = result.observation.current_item
             if current_item is None:
                 break
@@ -359,7 +363,6 @@ async def main():
             file_path = current_item.path
             ai_prob = current_item.ai_probability
 
-            # Safely parse AI signals (network/parsing can fail)
             try:
                 ai_signals = [
                     {
@@ -372,7 +375,6 @@ async def main():
             except Exception:
                 ai_signals = []
 
-            # Get LLM decision (wrapped: network call can fail)
             if llm_disabled_reason is None:
                 action_type, llm_error = get_llm_decision(
                     client,
@@ -396,15 +398,12 @@ async def main():
             else:
                 action_type = _fallback_decision(ai_prob)
 
-            # Execute action (wrapped: env step can fail)
             action = BloatAction(action_type=action_type)
             try:
                 result = await env.step(action)
             except Exception:
                 break
 
-            # Log step
-            # NOTE: reward lives on StepResult, not on the observation dict.
             log_step(
                 episode_id,
                 step_count,
@@ -414,14 +413,32 @@ async def main():
                 ai_prob,
             )
 
-            # Check timeout
             elapsed = time.time() - start_time
             if elapsed > 1200:  # 20 minutes
                 break
 
-        # Episode complete — episode_summary may be None if we broke out early
+        # --- Episode complete ---
         final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
+
+        # Run and log grader scores for contest evaluation
+        if run_all_graders is not None:
+            # Build a synthetic episode_result dict that graders understand
+            episode_result = {
+                "observation": {
+                    "episode_summary": {
+                        "true_positives": result.observation.true_positives,
+                        "false_positives": result.observation.false_positives,
+                        "true_negatives": result.observation.true_negatives,
+                        "false_negatives": result.observation.false_negatives,
+                        "step_count": result.observation.step_count,
+                        # reward_total may not be on observation; use accumulated estimate
+                        "reward_total": final_summary.get("reward_total", 0.0),
+                    }
+                }
+            }
+            scores = run_all_graders(episode_result)
+            log_grader_scores(episode_id, scores)
 
         return
 
