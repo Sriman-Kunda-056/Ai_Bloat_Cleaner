@@ -26,9 +26,9 @@ recall, with heavy penalties for destroying real human work.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `HF_TOKEN` | ✅ on HF Spaces (auto-injected) | — | HuggingFace token — used as the API key for the HF Inference API |
+| `HF_TOKEN` | ✅ on HF Spaces (auto-injected) | — | HuggingFace token — used as the API key for the HF Router API |
 | `OPENAI_API_KEY` | Alternative to `HF_TOKEN` | — | OpenAI key (use when pointing `API_BASE_URL` at OpenAI) |
-| `API_BASE_URL` | No | `https://api-inference.huggingface.co/v1` (HF) / `https://api.openai.com/v1` (OpenAI) | LLM endpoint (any OpenAI-compatible API) |
+| `API_BASE_URL` | No | `https://router.huggingface.co/v1` (HF) / `https://api.openai.com/v1` (OpenAI) | LLM endpoint (any OpenAI-compatible API) |
 | `MODEL_NAME` | No | `Qwen/Qwen2.5-72B-Instruct` (HF) / `gpt-4o-mini` (OpenAI) | Model identifier |
 | `BLOAT_DETECTOR_URL` | No | `http://localhost:8000` | URL of the running environment server |
 

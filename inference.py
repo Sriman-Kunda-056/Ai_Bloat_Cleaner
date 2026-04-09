@@ -6,9 +6,9 @@ Uses OpenAI-compatible client to make LLM-based decisions on file classification
 Follows mandatory [START], [STEP], [END] structured logging format.
 
 Environment Variables:
-    HF_TOKEN        - HuggingFace token (auto-injected in HF Spaces; used for HF Inference API)
+    HF_TOKEN        - HuggingFace token (auto-injected in HF Spaces; used for HF Router API)
     OPENAI_API_KEY  - OpenAI key (alternative when using OpenAI directly)
-    API_BASE_URL    - LLM endpoint. Defaults to HF Inference API when HF_TOKEN is set,
+    API_BASE_URL    - LLM endpoint. Defaults to HF Router API when HF_TOKEN is set,
                       or https://api.openai.com/v1 when OPENAI_API_KEY is set.
     MODEL_NAME      - Model identifier. Default: Qwen/Qwen2.5-72B-Instruct (HF) or gpt-4o-mini (OpenAI)
     BLOAT_DETECTOR_URL - Environment server URL. Default: http://localhost:8000
@@ -16,14 +16,14 @@ Environment Variables:
 Usage:
     # On HuggingFace Spaces — HF_TOKEN is injected automatically, no action needed.
 
-    # Local with HF Inference API:
+    # Local with HF Router API:
     HF_TOKEN=hf_xxx python inference.py
 
     # Local with OpenAI:
     OPENAI_API_KEY=sk-xxx python inference.py
 
     # Local with custom endpoint:
-    HF_TOKEN=hf_xxx API_BASE_URL=https://api-inference.huggingface.co/v1 MODEL_NAME=Qwen/Qwen2.5-72B-Instruct python inference.py
+    HF_TOKEN=hf_xxx API_BASE_URL=https://router.huggingface.co/v1 MODEL_NAME=Qwen/Qwen2.5-72B-Instruct python inference.py
 """
 
 import json
@@ -46,16 +46,16 @@ except ModuleNotFoundError:
 # Configuration
 # -----------------------------------------------------------------------------
 
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Auto-select sensible defaults depending on which credential is present.
-# HF_TOKEN → HuggingFace Inference API (OpenAI-compatible)
+# HF_TOKEN → HuggingFace Router API (OpenAI-compatible)
 # OPENAI_API_KEY → OpenAI directly
 _using_hf = bool(HF_TOKEN) and not OPENAI_API_KEY
 
 _default_base_url = (
-    "https://api-inference.huggingface.co/v1" if _using_hf else "https://api.openai.com/v1"
+    "https://router.huggingface.co/v1" if _using_hf else "https://api.openai.com/v1"
 )
 _default_model = (
     "Qwen/Qwen2.5-72B-Instruct" if _using_hf else "gpt-4o-mini"

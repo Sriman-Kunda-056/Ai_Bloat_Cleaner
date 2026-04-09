@@ -43,4 +43,4 @@ scoring:
     open_interval: true
     min_exclusive: 0.0
     max_exclusive: 1.0
-  score_formula: mean(task_scores)
+  score_formula: mean(task_scores)      
