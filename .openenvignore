@@ -1,0 +1,31 @@
+# Keep push payload minimal and deterministic
+.venv/
+venv/
+env/
+
+.git/
+.github/
+.vscode/
+.idea/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+*.egg-info/
+dist/
+build/
+.eggs/
+
+outputs/
+
+.env
+.env.local
+*.env
+
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
