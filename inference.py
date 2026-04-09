@@ -32,7 +32,7 @@ import sys
 import time
 import asyncio
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from openai import OpenAI
 
@@ -48,6 +48,7 @@ except ModuleNotFoundError:
 
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+_api_base_url_env = os.getenv("API_BASE_URL", "").strip()
 
 # Auto-select sensible defaults depending on which credential is present.
 # HF_TOKEN → HuggingFace Router API (OpenAI-compatible)
@@ -57,11 +58,17 @@ _using_hf = bool(HF_TOKEN) and not OPENAI_API_KEY
 _default_base_url = (
     "https://router.huggingface.co/v1" if _using_hf else "https://api.openai.com/v1"
 )
+if _api_base_url_env and "api-inference.huggingface.co" in _api_base_url_env:
+    # Auto-migrate old HF endpoint to avoid HTTP 410 errors.
+    _api_base_url_env = _api_base_url_env.replace(
+        "https://api-inference.huggingface.co",
+        "https://router.huggingface.co",
+    )
 _default_model = (
     "Qwen/Qwen2.5-72B-Instruct" if _using_hf else "gpt-4o-mini"
 )
 
-API_BASE_URL = os.getenv("API_BASE_URL", _default_base_url)
+API_BASE_URL = _api_base_url_env or _default_base_url
 MODEL_NAME = os.getenv("MODEL_NAME", _default_model)
 
 # Server endpoint
@@ -70,6 +77,101 @@ BLOAT_DETECTOR_URL = os.getenv("BLOAT_DETECTOR_URL", "http://localhost:8000")
 # Inference limits
 MAX_STEPS = 500
 DECISION_TIMEOUT_SECS = 30
+
+
+def _fallback_decision(ai_probability: float) -> str:
+    """Deterministic fallback when LLM is unavailable."""
+    if ai_probability > 0.8:
+        return "delete"
+    if ai_probability > 0.5:
+        return "flag"
+    return "skip"
+
+
+def _is_fatal_llm_error(error_text: str) -> bool:
+    """Detect provider/auth/config errors that should disable further LLM calls."""
+    fatal_markers = (
+        "error code: 401",
+        "error code: 403",
+        "error code: 404",
+        "error code: 410",
+        "invalid api key",
+        "authentication",
+        "not supported",
+        "model not found",
+    )
+    lower = error_text.lower()
+    return any(marker in lower for marker in fatal_markers)
+
+
+def _select_api_key() -> str:
+    """Choose the right key for the configured backend."""
+    base = API_BASE_URL.lower()
+
+    if "openai.com" in base and OPENAI_API_KEY:
+        return OPENAI_API_KEY
+    if "huggingface.co" in base and HF_TOKEN:
+        return HF_TOKEN
+
+    # Generic OpenAI-compatible endpoint fallback.
+    return OPENAI_API_KEY or HF_TOKEN
+
+
+def _age_days(timestamp: float) -> float:
+    """Return item age in days from a Unix timestamp."""
+    if not timestamp:
+        return 0.0
+    return max(0.0, (time.time() - timestamp) / 86400.0)
+
+
+def _signal_counts(ai_signals: list) -> Tuple[int, int, int]:
+    """Summarize signal strength for prompt conditioning."""
+    high = medium = low = 0
+    for sig in ai_signals:
+        confidence = float(sig.get("confidence", 0.0))
+        if confidence >= 0.8:
+            high += 1
+        elif confidence >= 0.5:
+            medium += 1
+        else:
+            low += 1
+    return high, medium, low
+
+
+def _build_feature_summary(file_info: Dict, ai_probability: float, ai_signals: list) -> str:
+    """Build a compact feature summary that adds derived evidence to the prompt."""
+    size_bytes = int(file_info.get("size_bytes", 0) or 0)
+    child_count = int(file_info.get("child_count", 0) or 0)
+    extension = str(file_info.get("extension", "") or "")
+    is_directory = bool(file_info.get("is_directory", False))
+    is_recent = _age_days(float(file_info.get("mtime", 0.0) or 0.0)) < 0.5
+    age_days = _age_days(float(file_info.get("mtime", 0.0) or 0.0))
+    type_mismatch = bool(file_info.get("type_mismatch", False))
+    high_signals, medium_signals, low_signals = _signal_counts(ai_signals)
+
+    if is_directory:
+        size_bucket = "directory"
+    elif size_bytes == 0:
+        size_bucket = "empty"
+    elif size_bytes < 2048:
+        size_bucket = "tiny"
+    elif size_bytes < 10240:
+        size_bucket = "small"
+    elif size_bytes < 100000:
+        size_bucket = "medium"
+    else:
+        size_bucket = "large"
+
+    return (
+        f"FILE_EXT={extension or '(none)'}\n"
+        f"FILE_KIND={'directory' if is_directory else 'file'}\n"
+        f"SIZE_BUCKET={size_bucket} SIZE_BYTES={size_bytes}\n"
+        f"CHILD_COUNT={child_count}\n"
+        f"AGE_DAYS={age_days:.2f} IS_RECENT={str(is_recent).lower()}\n"
+        f"TYPE_MISMATCH={str(type_mismatch).lower()}\n"
+        f"AI_PROBABILITY={ai_probability:.2f}\n"
+        f"SIGNAL_COUNTS high={high_signals} medium={medium_signals} low={low_signals}"
+    )
 
 
 # 
@@ -83,7 +185,7 @@ def get_llm_decision(
     file_info: Dict,
     ai_probability: float,
     ai_signals: list,
-) -> str:
+) -> Tuple[str, Optional[str]]:
     """
     Query LLM to classify the file as delete/flag/skip.
 
@@ -95,7 +197,7 @@ def get_llm_decision(
         ai_signals: List of AI signal objects with confidence scores
 
     Returns:
-        action_type: "delete", "flag", or "skip"
+        (action_type, error_message)
     """
     # Format signals for the prompt
     signal_summary = "\n".join(
@@ -106,12 +208,18 @@ def get_llm_decision(
         ]
     )
 
-    prompt = f"""You are an expert AI filesystem forensics analyst. Classify the following file as likely AI-generated bloat ("delete"), uncertain ("flag"), or human-created ("skip").
+    feature_summary = _build_feature_summary(file_info, ai_probability, ai_signals)
+
+    prompt = f"""You are an expert AI filesystem forensics analyst.
+Use the derived features and signal details below to decide whether the item is likely AI-generated bloat.
+Prefer evidence-based decisions over raw probability alone.
+
+Return exactly one word: delete, flag, or skip.
+
+DERIVED FEATURES:
+{feature_summary}
 
 FILE PATH: {file_path}
-IS_DIRECTORY: {file_info.get('is_directory', False)}
-SIZE_BYTES: {file_info.get('size_bytes', 0):,}
-AI_PROBABILITY: {ai_probability:.2f}
 
 AI SIGNALS DETECTED:
 {signal_summary if signal_summary else "  (none)"}
@@ -137,24 +245,12 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
 
         # Validate response
         if decision in ("delete", "flag", "skip"):
-            return decision
-        else:
-            # Fallback: use ai_probability as tiebreaker
-            if ai_probability > 0.85:
-                return "delete"
-            elif ai_probability > 0.6:
-                return "flag"
-            else:
-                return "skip"
+            return decision, None
+
+        # Fallback if model returns unexpected text.
+        return _fallback_decision(ai_probability), "unexpected model output"
     except Exception as e:
-        print(f"[ERROR] LLM decision failed: {e}", file=sys.stderr)
-        # Fallback strategy based on ai_probability
-        if ai_probability > 0.8:
-            return "delete"
-        elif ai_probability > 0.5:
-            return "flag"
-        else:
-            return "skip"
+        return _fallback_decision(ai_probability), str(e)
 
 
 # 
@@ -215,18 +311,19 @@ async def main():
     """Run inference on the bloat detector environment."""
 
     # Initialize OpenAI-compatible client
-    api_key = HF_TOKEN or OPENAI_API_KEY
+    api_key = _select_api_key()
     if not api_key:
         print(
             "[ERROR] No API key found.\n"
             "  On HuggingFace Spaces: HF_TOKEN is injected automatically — nothing to do.\n"
-            "  Locally: set HF_TOKEN (for HF Inference API) or OPENAI_API_KEY (for OpenAI).\n"
+            "  Locally: set HF_TOKEN (for HF Router API) or OPENAI_API_KEY (for OpenAI).\n"
             "  Example: HF_TOKEN=hf_xxx python inference.py",
             file=sys.stderr,
         )
         sys.exit(1)
 
     client = OpenAI(api_key=api_key, base_url=API_BASE_URL)
+    llm_disabled_reason: Optional[str] = None
 
     # Connect to environment
     try:
@@ -272,34 +369,38 @@ async def main():
                     }
                     for sig in current_item.ai_signals
                 ]
-            except Exception as e:
-                print(f"[WARNING] Failed to parse ai_signals at step {step_count}: {e}", file=sys.stderr)
+            except Exception:
                 ai_signals = []
 
             # Get LLM decision (wrapped: network call can fail)
-            try:
-                action_type = get_llm_decision(
+            if llm_disabled_reason is None:
+                action_type, llm_error = get_llm_decision(
                     client,
                     file_path,
                     {
                         "size_bytes": current_item.size_bytes,
                         "is_directory": current_item.is_directory,
                         "type": current_item.detected_type,
+                        "child_count": current_item.child_count,
+                        "extension": current_item.extension,
+                        "mtime": current_item.mtime,
+                        "ctime": current_item.ctime,
+                        "atime": current_item.atime,
+                        "type_mismatch": current_item.type_mismatch,
                     },
                     ai_prob,
                     ai_signals,
                 )
-            except Exception as e:
-                print(f"[WARNING] LLM decision error at step {step_count}: {e}", file=sys.stderr)
-                # Fallback: use probability threshold
-                action_type = "delete" if ai_prob > 0.85 else "flag" if ai_prob > 0.6 else "skip"
+                if llm_error and _is_fatal_llm_error(llm_error):
+                    llm_disabled_reason = llm_error
+            else:
+                action_type = _fallback_decision(ai_prob)
 
             # Execute action (wrapped: env step can fail)
             action = BloatAction(action_type=action_type)
             try:
                 result = await env.step(action)
-            except Exception as e:
-                print(f"[ERROR] env.step() failed at step {step_count}: {e}", file=sys.stderr)
+            except Exception:
                 break
 
             # Log step
@@ -316,23 +417,13 @@ async def main():
             # Check timeout
             elapsed = time.time() - start_time
             if elapsed > 1200:  # 20 minutes
-                print(
-                    f"[WARNING] Runtime exceeded 20 minutes, terminating early",
-                    file=sys.stderr,
-                )
                 break
 
         # Episode complete — episode_summary may be None if we broke out early
         final_summary = result.observation.episode_summary or {}
         log_end(episode_id, step_count, final_summary)
 
-        print(
-            f"\n[SUMMARY] Episode {episode_id}: "
-            f"F1={final_summary.get('f1_score', 0):.3f}, "
-            f"Bytes freed={final_summary.get('bytes_freed', 0):,}, "
-            f"Steps={step_count}",
-            file=sys.stderr,
-        )
+        return
 
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user", file=sys.stderr)
