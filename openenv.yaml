@@ -1,6 +1,46 @@
 spec_version: 1
 name: ai_bloat_detector
+description: >
+	OpenEnv-compatible AI digital bloat triage benchmark.
+	The agent inspects filesystem fingerprints and decides whether to delete,
+	flag, or skip each item while maximizing precision/recall balance.
+version: "1.0.0"
+author: Meta x Scaler
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+
+observation_space:
+	type: structured
+	description: >
+		FileFingerprint observation containing path, metadata, ai_signals,
+		and ai_probability.
+
+action_space:
+	type: discrete
+	actions:
+		- delete
+		- flag
+		- skip
+	description: >
+		delete removes probable AI bloat, flag sends for review,
+		skip preserves likely human-authored files.
+
+tasks:
+	- id: task_1_precision
+		description: Maximize precision by minimizing false positives.
+	- id: task_2_recall
+		description: Maximize recall by minimizing false negatives.
+	- id: task_3_f1
+		description: Balance precision and recall with high F1-score.
+	- id: task_4_efficiency
+		description: Maximize bytes freed per step under a limited budget.
+
+scoring:
+	reward_range: [0.0, 1.0]
+	score_constraints:
+		open_interval: true
+		min_exclusive: 0.0
+		max_exclusive: 1.0
+	score_formula: mean(task_scores)
