@@ -13,7 +13,7 @@ try:
         run_all_graders,
     )
 except ModuleNotFoundError:
-    from my_env.tasks.graders import (
+    from tasks.graders import (
         grader_efficiency,
         grader_f1_score,
         grader_precision,

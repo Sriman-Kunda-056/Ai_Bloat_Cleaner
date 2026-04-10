@@ -22,15 +22,15 @@ except (ModuleNotFoundError, ImportError):
         from .client import AiBloatDetector
         from .models import BloatAction
     except (ModuleNotFoundError, ImportError):
-        from my_env import AiBloatDetector, BloatAction
+        from server.my_env_environment import AiBloatDetector, BloatAction
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
 
-HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
+HF_TOKEN = os.getenv("HF_TOKEN", "Qwen/Qwen2.5-72B-Instruct").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-_api_base_url_env = os.getenv("API_BASE_URL", "").strip()
+_api_base_url_env = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1").strip()
 
 _using_hf = bool(HF_TOKEN) and not OPENAI_API_KEY
 
@@ -51,6 +51,15 @@ BLOAT_DETECTOR_URL = os.getenv("BLOAT_DETECTOR_URL", "http://localhost:8000")
 
 MAX_STEPS = 500
 DECISION_TIMEOUT_SECS = 30
+
+ENV_NAME = "ai_bloat_detector"
+
+try:
+    from tasks.definitions import TASK_NAMES as DEFINED_TASK_NAMES
+except Exception:
+    DEFINED_TASK_NAMES = ["precision", "recall", "f1_score", "efficiency"]
+
+TASKS = list(DEFINED_TASK_NAMES)
 
 
 def _fallback_decision(ai_probability: float) -> str:
@@ -195,26 +204,26 @@ RESPOND WITH EXACTLY ONE WORD: delete | flag | skip
 # Structured Logging
 # ---------------------------------------------------------------------------
 
-def log_start(episode_id: str, env_name: str) -> None:
+def log_start(task_name: str, episode_id: str, env_name: str) -> None:
     print(
-        f"[START] task={env_name} episode_id={episode_id} "
+        f"[START] task={task_name} env={env_name} episode_id={episode_id} "
         f"timestamp={time.time():.6f} model={MODEL_NAME}",
         flush=True,
     )
 
 
-def log_step(episode_id, step_num, file_path, action_type, reward, ai_probability):
+def log_step(task_name, episode_id, step_num, file_path, action_type, reward, ai_probability):
     safe_file = file_path.replace(" ", "_")
     print(
-        f"[STEP] episode_id={episode_id} step={step_num} file={safe_file} "
+        f"[STEP] task={task_name} episode_id={episode_id} step={step_num} file={safe_file} "
         f"action={action_type} reward={reward:.4f} ai_probability={ai_probability:.4f}",
         flush=True,
     )
 
 
-def log_end(episode_id, total_steps, episode_summary):
+def log_end(task_name, episode_id, total_steps, episode_summary):
     print(
-        f"[END] task=ai_bloat_detector episode_id={episode_id} "
+        f"[END] task={task_name} env={ENV_NAME} episode_id={episode_id} "
         f"score={episode_summary.get('f1_score', 0.0):.4f} steps={total_steps} "
         f"precision={episode_summary.get('precision', 0.0):.4f} "
         f"recall={episode_summary.get('recall', 0.0):.4f} "
@@ -229,26 +238,22 @@ def log_end(episode_id, total_steps, episode_summary):
 # Main Inference Loop
 # ---------------------------------------------------------------------------
 
-async def main():
-    api_key = _select_api_key()
-    if not api_key:
-        print(
-            "[ERROR] No API key found.\n"
-            "  On HuggingFace Spaces: HF_TOKEN is injected automatically.\n"
-            "  Locally: set HF_TOKEN or OPENAI_API_KEY.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    client = AsyncOpenAI(api_key=api_key, base_url=API_BASE_URL)  # ← AsyncOpenAI
+async def run_task(client: AsyncOpenAI, task_name: str) -> None:
     llm_disabled_reason: Optional[str] = None
     env = None   # ← FIXED: initialise to None before try
 
     try:
         env = AiBloatDetector(base_url=BLOAT_DETECTOR_URL)
-        result = await env.reset()
+        # Some OpenEnv servers support task_id on reset. Fall back when not supported.
+        try:
+            result = await env.reset(task_id=task_name)
+        except TypeError:
+            result = await env.reset()
+        except Exception:
+            result = await env.reset()
+
         episode_id = str(uuid.uuid4())
-        log_start(episode_id, "ai_bloat_detector")
+        log_start(task_name, episode_id, ENV_NAME)
 
         step_count = 0
         start_time = time.time()
@@ -303,7 +308,7 @@ async def main():
                 print(f"[WARN] step failed: {e}", file=sys.stderr)
                 break
 
-            log_step(episode_id, step_count, file_path, action_type,
+            log_step(task_name, episode_id, step_count, file_path, action_type,
                      result.reward or 0.0, ai_prob)
 
             elapsed = time.time() - start_time
@@ -323,7 +328,7 @@ async def main():
                 pass
 
         final_summary = result.observation.episode_summary or {}
-        log_end(episode_id, step_count, final_summary)
+        log_end(task_name, episode_id, step_count, final_summary)
 
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user", file=sys.stderr)
@@ -334,6 +339,22 @@ async def main():
     finally:
         if env is not None:       # ← FIXED: guard against uninitialized env
             await env.close()
+
+
+async def main():
+    api_key = _select_api_key()
+    if not api_key:
+        print(
+            "[ERROR] No API key found.\n"
+            "  On HuggingFace Spaces: HF_TOKEN is injected automatically.\n"
+            "  Locally: set HF_TOKEN or OPENAI_API_KEY.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    client = AsyncOpenAI(api_key=api_key, base_url=API_BASE_URL)  # ← AsyncOpenAI
+    for task_name in TASKS:
+        await run_task(client, task_name)
 
 
 if __name__ == "__main__":
