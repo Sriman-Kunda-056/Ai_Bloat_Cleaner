@@ -752,7 +752,7 @@ class AiBloatDetectorEnvironment(Environment):
                 )
         elif act == "flag":
             if is_bloat:
-                self._tp += 1  # count as TP for precision/recall
+                self._fn += 1  # FN: bloat identified but not deleted
                 return REWARD_FLAG_TP, (
                     f"FLAG (+{REWARD_FLAG_TP:.2f}): '{fp.path}' is AI bloat  flagged for review."
                 )

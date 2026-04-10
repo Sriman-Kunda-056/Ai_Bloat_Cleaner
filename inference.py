@@ -17,12 +17,15 @@ from openai import AsyncOpenAI   # ← FIXED: async client
 try:
     from client import AiBloatDetector
     from models import BloatAction
+    from tasks import run_all_graders
 except (ModuleNotFoundError, ImportError):
     try:
         from .client import AiBloatDetector
         from .models import BloatAction
+        from .tasks import run_all_graders
     except (ModuleNotFoundError, ImportError):
         from server.my_env_environment import AiBloatDetector, BloatAction
+        run_all_graders = None
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -221,17 +224,87 @@ def log_step(task_name, episode_id, step_num, file_path, action_type, reward, ai
     )
 
 
+def _analyze_decision_history(episode_summary):
+    """Analyze history to debug perfect scores.
+    
+    Returns tuple: (tp_list, fp_list, fn_list, tn_list)
+    where each list contains {'path': str, 'action': str, 'is_bloat': bool}
+    """
+    tp_list, fp_list, fn_list, tn_list = [], [], [], []
+    history = episode_summary.get('history', [])
+    
+    for entry in history:
+        if isinstance(entry, dict):
+            path = entry.get('path', '')
+            action = entry.get('action', '')
+            is_bloat = entry.get('is_bloat', False)
+            ai_prob = entry.get('ai_probability', 0.0)
+            
+            entry_dict = {'path': path, 'action': action, 'ai_prob': ai_prob}
+            
+            if is_bloat and action == 'delete':
+                tp_list.append(entry_dict)
+            elif not is_bloat and action == 'delete':
+                fp_list.append(entry_dict)
+            elif is_bloat and action in ('skip', 'flag'):
+                fn_list.append(entry_dict)
+            elif not is_bloat and action in ('skip', 'flag'):
+                tn_list.append(entry_dict)
+    
+    return tp_list, fp_list, fn_list, tn_list
+
+
 def log_end(task_name, episode_id, total_steps, episode_summary):
+    env_f1 = episode_summary.get('f1_score', 0.0)
+    env_prec = episode_summary.get('precision', 0.0)
+    env_rec = episode_summary.get('recall', 0.0)
+    
+    tp = episode_summary.get('true_positives', 0)
+    fp = episode_summary.get('false_positives', 0)
+    tn = episode_summary.get('true_negatives', 0)
+    fn = episode_summary.get('false_negatives', 0)
+    
+    # Main log line
     print(
         f"[END] task={task_name} env={ENV_NAME} episode_id={episode_id} "
-        f"score={episode_summary.get('f1_score', 0.0):.4f} steps={total_steps} "
-        f"precision={episode_summary.get('precision', 0.0):.4f} "
-        f"recall={episode_summary.get('recall', 0.0):.4f} "
-        f"bytes_freed={episode_summary.get('bytes_freed', 0)} "
+        f"env_score={env_f1:.4f} env_precision={env_prec:.4f} env_recall={env_rec:.4f} "
+        f"steps={total_steps} bytes_freed={episode_summary.get('bytes_freed', 0)} "
         f"reward_total={episode_summary.get('reward_total', 0.0):.4f} "
+        f"tp={tp} fp={fp} tn={tn} fn={fn} "
         f"timestamp={time.time():.6f}",
         flush=True,
     )
+    
+    # Diagnostic: Analyze decision history to verify confusion matrix
+    tp_list, fp_list, fn_list, tn_list = _analyze_decision_history(episode_summary)
+    
+    print(
+        f"[DIAG] confusion_matrix_verification: "
+        f"computed_tp={len(tp_list)} computed_fp={len(fp_list)} "
+        f"computed_fn={len(fn_list)} computed_tn={len(tn_list)} | "
+        f"reported_tp={tp} reported_fp={fp} reported_fn={fn} reported_tn={tn}",
+        flush=True,
+    )
+    
+    # Show problematic decisions that caused incorrect classifications
+    if fp_list:
+        print(f"[WARN] False positives (deleted human files): {len(fp_list)}", flush=True)
+        for item in fp_list[:3]:  # Show first 3
+            print(f"       - {item['path']} (ai_prob={item['ai_prob']:.2f})", flush=True)
+    
+    if fn_list:
+        print(f"[WARN] False negatives (missed bloat): {len(fn_list)}", flush=True)
+        for item in fn_list[:3]:  # Show first 3
+            print(f"       - {item['path']} (ai_prob={item['ai_prob']:.2f})", flush=True)
+    
+    # If perfect metrics, explain why
+    if env_f1 == 1.0 and fp == 0 and fn == 0:
+        total_bloat = episode_summary.get('total_ai_bloat_items', 0)
+        print(
+            f"[INFO] Perfect F1 score (1.0): agent correctly deleted all {tp} bloat items "
+            f"and skipped all {tn} human items (0 mistakes)",
+            flush=True,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1,252 +1,290 @@
-# tasks/definitions.py
-# Pre-computed synthetic file observations for grading — no live server needed.
-
-# Each scenario: list of file_meta dicts with known labels.
-# Fields match AiBloatDetectorEnvironment's file_meta schema.
+"""Pre-computed synthetic task observations and signals for AI bloat grading."""
 
 TASKS = {
     "precision": {
         "description": (
-            "Minimise false positives: only delete files with very high AI signature. "
-            "Correct action: delete only obvious bloat (ai_signature > 0.8, label='bloat')."
+            "Minimise false positives: delete only obvious AI bloat and avoid human files."
         ),
-        "files": [
+        "ideal_action": "delete",
+        "steps": [
             {
-                "path": "/tmp/ai_gen/report_v1.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 2.5,
-                "ai_signature": 0.92,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — .cursor/rules.json:\n"
+                    "FILE_KIND=directory\n"
+                    "SIZE_BUCKET=directory SIZE_BYTES=4096\n"
+                    "CHILD_COUNT=4\n"
+                    "AGE_DAYS=0.10 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.98\n"
+                    "SIGNAL_COUNTS high=2 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "directory",
+                    "ai_probability": 0.98,
+                    "hidden_artifact_dir": True,
+                    "recent": True,
+                    "size_bytes": 4096,
+                    "child_count": 4,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/home/user/notes.md",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.1,
-                "ai_signature": 0.15,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
+                "observation": (
+                    "Workspace Scan — README.md:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=small SIZE_BYTES=2432\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=18.40 IS_RECENT=false\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.09\n"
+                    "SIGNAL_COUNTS high=0 medium=0 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.09,
+                    "human_documentation": True,
+                    "size_bytes": 2432,
+                    "ideal_action": "skip",
+                },
             },
             {
-                "path": "/tmp/ai_cache/output_42.json",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 5.0,
-                "ai_signature": 0.88,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
-            },
-            {
-                "path": "/etc/hosts",
-                "label": "human",
-                "is_critical": True,
-                "size_mb": 0.01,
-                "ai_signature": 0.05,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_gen/summary.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 1.2,
-                "ai_signature": 0.95,
-                "content_hash_group": "cluster_a",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — assets/secret.png:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=small SIZE_BYTES=8192\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.02 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=true\n"
+                    "AI_PROBABILITY=0.94\n"
+                    "SIGNAL_COUNTS high=2 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.94,
+                    "type_mismatch": True,
+                    "disguised_payload": True,
+                    "size_bytes": 8192,
+                    "ideal_action": "delete",
+                },
             },
         ],
     },
 
     "recall": {
         "description": (
-            "Minimise false negatives: catch all bloat files. "
-            "Correct action: delete every file with label='bloat'."
+            "Minimise false negatives: catch every obvious AI bloat artifact."
         ),
-        "files": [
+        "ideal_action": "delete",
+        "steps": [
             {
-                "path": "/tmp/ai_outputs/draft_001.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 3.0,
-                "ai_signature": 0.85,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — venv/pyvenv.cfg:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=tiny SIZE_BYTES=101\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.03 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.97\n"
+                    "SIGNAL_COUNTS high=2 medium=0 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.97,
+                    "virtualenv_internal": True,
+                    "size_bytes": 101,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/tmp/ai_outputs/draft_002.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 3.0,
-                "ai_signature": 0.83,
-                "content_hash_group": "cluster_b",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — __pycache__/main.cpython-311.pyc:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=tiny SIZE_BYTES=2048\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.04 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.99\n"
+                    "SIGNAL_COUNTS high=3 medium=0 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.99,
+                    "bytecode_artifact": True,
+                    "size_bytes": 2048,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/var/log/syslog",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 1.5,
-                "ai_signature": 0.10,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_gen/bulk_export.csv",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 8.0,
-                "ai_signature": 0.91,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
-            },
-            {
-                "path": "/home/user/project/main.py",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.05,
-                "ai_signature": 0.20,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_gen/low_conf.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 0.5,
-                "ai_signature": 0.72,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — node_modules/lodash/lodash.js:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=large SIZE_BYTES=512000\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.01 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.88\n"
+                    "SIGNAL_COUNTS high=2 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.88,
+                    "dependency_bloat": True,
+                    "size_bytes": 512000,
+                    "ideal_action": "delete",
+                },
             },
         ],
     },
 
     "f1_score": {
         "description": (
-            "Balance precision and recall for an optimal F1 score. "
-            "Mix of obvious bloat, marginal bloat, and human files."
+            "Balance precision and recall when the signal mix contains both obvious and marginal bloat."
         ),
-        "files": [
+        "ideal_action": "delete",
+        "steps": [
             {
-                "path": "/tmp/ai_cache/high_conf.bin",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 10.0,
-                "ai_signature": 0.94,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — src/helpers.py:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=small SIZE_BYTES=6144\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.12 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.86\n"
+                    "SIGNAL_COUNTS high=1 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.86,
+                    "ai_scaffold_name": True,
+                    "batch_creation": True,
+                    "size_bytes": 6144,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/home/user/config.yaml",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.02,
-                "ai_signature": 0.12,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
+                "observation": (
+                    "Workspace Scan — notes.txt:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=small SIZE_BYTES=2048\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=21.00 IS_RECENT=false\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.18\n"
+                    "SIGNAL_COUNTS high=0 medium=0 low=1\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.18,
+                    "human_note": True,
+                    "size_bytes": 2048,
+                    "ideal_action": "skip",
+                },
             },
             {
-                "path": "/tmp/ai_cache/medium_conf.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 4.0,
-                "ai_signature": 0.75,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
-            },
-            {
-                "path": "/usr/local/bin/script.sh",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.01,
-                "ai_signature": 0.08,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_cache/dup_a.json",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 2.0,
-                "ai_signature": 0.90,
-                "content_hash_group": "cluster_c",
-                "ideal_action": "delete",
-            },
-            {
-                "path": "/home/user/data.csv",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.8,
-                "ai_signature": 0.30,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_gen/marginal.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 0.3,
-                "ai_signature": 0.82,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — temp_draft_v1_copy.py:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=tiny SIZE_BYTES=1280\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=0.05 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.83\n"
+                    "SIGNAL_COUNTS high=1 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.83,
+                    "temp_draft": True,
+                    "duplicate_content": True,
+                    "size_bytes": 1280,
+                    "ideal_action": "delete",
+                },
             },
         ],
     },
 
     "efficiency": {
         "description": (
-            "Maximise bytes freed per step under a limited budget. "
-            "Prefer deleting large bloat files first."
+            "Maximise bytes freed per step by prioritising large, high-confidence bloat first."
         ),
-        "files": [
+        "ideal_action": "delete",
+        "steps": [
             {
-                "path": "/tmp/ai_bulk/large_export.bin",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 50.0,
-                "ai_signature": 0.93,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — node_modules/:\n"
+                    "FILE_KIND=directory\n"
+                    "SIZE_BUCKET=directory SIZE_BYTES=78643200\n"
+                    "CHILD_COUNT=1240\n"
+                    "AGE_DAYS=0.02 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.95\n"
+                    "SIGNAL_COUNTS high=3 medium=0 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "directory",
+                    "ai_probability": 0.95,
+                    "dependency_bloat": True,
+                    "size_bytes": 78643200,
+                    "child_count": 1240,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/tmp/ai_bulk/medium_export.bin",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 20.0,
-                "ai_signature": 0.89,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — dist/:\n"
+                    "FILE_KIND=directory\n"
+                    "SIZE_BUCKET=directory SIZE_BYTES=31457280\n"
+                    "CHILD_COUNT=312\n"
+                    "AGE_DAYS=0.02 IS_RECENT=true\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.89\n"
+                    "SIGNAL_COUNTS high=2 medium=1 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "directory",
+                    "ai_probability": 0.89,
+                    "build_output": True,
+                    "size_bytes": 31457280,
+                    "child_count": 312,
+                    "ideal_action": "delete",
+                },
             },
             {
-                "path": "/home/user/important.doc",
-                "label": "human",
-                "is_critical": False,
-                "size_mb": 0.5,
-                "ai_signature": 0.18,
-                "content_hash_group": "unique",
-                "ideal_action": "keep",
-            },
-            {
-                "path": "/tmp/ai_bulk/small_bloat.txt",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 0.05,
-                "ai_signature": 0.86,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
-            },
-            {
-                "path": "/tmp/ai_bulk/large_bloat_2.csv",
-                "label": "bloat",
-                "is_critical": False,
-                "size_mb": 35.0,
-                "ai_signature": 0.91,
-                "content_hash_group": "unique",
-                "ideal_action": "delete",
+                "observation": (
+                    "Workspace Scan — requirements.txt:\n"
+                    "FILE_KIND=file\n"
+                    "SIZE_BUCKET=tiny SIZE_BYTES=512\n"
+                    "CHILD_COUNT=0\n"
+                    "AGE_DAYS=6.00 IS_RECENT=false\n"
+                    "TYPE_MISMATCH=false\n"
+                    "AI_PROBABILITY=0.14\n"
+                    "SIGNAL_COUNTS high=0 medium=0 low=0\n"
+                    "Decide: DELETE, FLAG, or SKIP."
+                ),
+                "signals": {
+                    "file_kind": "file",
+                    "ai_probability": 0.14,
+                    "human_dependency_list": True,
+                    "size_bytes": 512,
+                    "ideal_action": "skip",
+                },
             },
         ],
     },
 }
 
 TASK_NAMES = list(TASKS.keys())
+
+__all__ = ["TASKS", "TASK_NAMES"]
