@@ -19,8 +19,8 @@ try:
     from models import BloatAction
 except (ModuleNotFoundError, ImportError):
     try:
-        from my_env.client import AiBloatDetector
-        from my_env.models import BloatAction
+        from .client import AiBloatDetector
+        from .models import BloatAction
     except (ModuleNotFoundError, ImportError):
         from my_env import AiBloatDetector, BloatAction
 
