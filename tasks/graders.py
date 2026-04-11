@@ -1,244 +1,272 @@
-"""Reward functions for AI bloat detection tasks. All rewards in (0.0, 1.0)."""
+"""Grader functions for AI Bloat Detector tasks.
+
+Each public grader function returns a float **strictly** in the open
+interval (0, 1).  The OpenEnv validator rejects any value that equals
+exactly 0.0 or 1.0, so every code path is guarded by _safe_score().
+
+This file is intentionally self-contained — it defines its own task
+data and helper constants so it never fails due to a missing import.
+"""
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
 
-from .definitions import TASKS
+# ---------------------------------------------------------------------------
+# Hard bounds: every score is forced into this interval before returning
+# ---------------------------------------------------------------------------
+_LO: float = 0.05   # minimum score — safely above 0.0
+_HI: float = 0.95   # maximum score — safely below 1.0
+
+
+def _safe_score(value: float) -> float:
+    """Return value clamped to (_LO, _HI), rounded to 4 decimal places.
+
+    This is the single chokepoint through which every grader result
+    passes, making it impossible to return 0.0 or 1.0.
+    """
+    clamped = min(_HI, max(_LO, float(value)))
+    return round(clamped, 4)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Inline task definitions (avoids any dependency on definitions.py)
+# ---------------------------------------------------------------------------
+# Each entry: (task_id, ideal_action, ai_probability, bonus_signals, size_bytes)
+_TASK_STEPS: Dict[str, List[Dict]] = {
+    "precision": [
+        {"ideal": "delete", "ai_prob": 0.98, "bonuses": ["hidden_artifact_dir"], "is_dir": True,  "size": 4096},
+        {"ideal": "skip",   "ai_prob": 0.09, "bonuses": [],                        "is_dir": False, "size": 2432},
+        {"ideal": "delete", "ai_prob": 0.94, "bonuses": ["type_mismatch"],          "is_dir": False, "size": 8192},
+    ],
+    "recall": [
+        {"ideal": "delete", "ai_prob": 0.97, "bonuses": ["virtualenv_internal"],    "is_dir": False, "size": 101},
+        {"ideal": "delete", "ai_prob": 0.99, "bonuses": ["bytecode_artifact"],      "is_dir": False, "size": 2048},
+        {"ideal": "delete", "ai_prob": 0.88, "bonuses": ["dependency_bloat"],       "is_dir": False, "size": 512000},
+    ],
+    "f1_score": [
+        {"ideal": "delete", "ai_prob": 0.86, "bonuses": ["ai_scaffold_name", "batch_creation"], "is_dir": False, "size": 6144},
+        {"ideal": "skip",   "ai_prob": 0.18, "bonuses": [],                                      "is_dir": False, "size": 2048},
+        {"ideal": "delete", "ai_prob": 0.83, "bonuses": ["temp_draft", "duplicate_content"],     "is_dir": False, "size": 1280},
+    ],
+    "efficiency": [
+        {"ideal": "delete", "ai_prob": 0.95, "bonuses": ["dependency_bloat"], "is_dir": True,  "size": 78643200},
+        {"ideal": "delete", "ai_prob": 0.89, "bonuses": ["build_output"],     "is_dir": True,  "size": 31457280},
+        {"ideal": "skip",   "ai_prob": 0.14, "bonuses": [],                   "is_dir": False, "size": 512},
+    ],
+}
+
+# Bonus weights for each signal type
+_BONUS_WEIGHTS: Dict[str, float] = {
+    "hidden_artifact_dir":  0.10,
+    "dependency_bloat":     0.10,
+    "build_output":         0.08,
+    "type_mismatch":        0.10,
+    "bytecode_artifact":    0.10,
+    "virtualenv_internal":  0.10,
+    "batch_creation":       0.06,
+    "duplicate_content":    0.06,
+    "ai_scaffold_name":     0.06,
+    "temp_draft":           0.06,
+}
+
+
+# ---------------------------------------------------------------------------
+# Strength helper
 # ---------------------------------------------------------------------------
 
-# Use a generous epsilon so floating-point rounding can never produce 0.0 or 1.0
-_EPS = 0.01
-_MAX = 1.0 - _EPS   # 0.99  — never reach 1.0
-_MIN = _EPS          # 0.01  — never reach 0.0
+def _strength(ai_prob: float, bonuses: List[str], is_dir: bool) -> float:
+    """Compute [0.05, 0.90] confidence score.
 
-
-def _clamp_open_interval(score: float) -> float:
-    """Clamp score to the strict open interval (0, 1).
-
-    The interval is (_EPS, 1-_EPS) = (0.01, 0.99), which guarantees the
-    score can never equal the boundary values 0.0 or 1.0 even after
-    floating-point rounding.
+    Capped at 0.90 (not 0.95 or 0.99) so that the most generous
+    downstream formula (base + coef * strength) stays below 1.0.
     """
-    return round(min(max(float(score), _MIN), _MAX), 4)
+    s = float(ai_prob)
+    for b in bonuses:
+        s += _BONUS_WEIGHTS.get(b, 0.0)
+    if is_dir:
+        s += 0.03
+    return min(0.90, max(0.05, s))
 
 
-def _compute_ai_strength(signals: Dict) -> float:
-    """
-    Compute composite bloat signal strength.
-    Combines ai_probability with binary signal indicators.
-    Returns a value clamped to [0.05, 0.95] so downstream formulas
-    can never push a score to exactly 0 or 1.
-    """
-    strength = float(signals.get("ai_probability", 0.05) or 0.05)
+# ---------------------------------------------------------------------------
+# Per-task scoring formulas
+# Worst-case maximums are annotated so they are easy to audit:
+#   delete max = base + coef * 0.90
+# All maxima are strictly below _HI = 0.95.
+# ---------------------------------------------------------------------------
 
-    signal_bonuses = [
-        ("hidden_artifact_dir", 0.15),
-        ("dependency_bloat", 0.15),
-        ("build_output", 0.10),
-        ("type_mismatch", 0.15),
-        ("bytecode_artifact", 0.15),
-        ("virtualenv_internal", 0.15),
-        ("batch_creation", 0.08),
-        ("duplicate_content", 0.08),
-        ("ai_scaffold_name", 0.08),
-        ("temp_draft", 0.08),
-    ]
-
-    for signal_name, bonus in signal_bonuses:
-        if signals.get(signal_name):
-            strength += bonus
-
-    if signals.get("file_kind") == "directory":
-        strength += 0.04
-
-    # Clamp to [0.05, 0.95] — wide enough to be meaningful, narrow enough
-    # so that *any* downstream linear formula stays away from 0 and 1.
-    return min(0.95, max(0.05, strength))
-
-
-def _grade_precision(action: str, signals: Dict) -> float:
-    """
-    Precision task: minimise false positives by deleting only obvious bloat.
-    Correct action: DELETE for high-confidence bloat, SKIP for human files.
-    """
-    strength = _compute_ai_strength(signals)
-
+def _score_precision(action: str, ai_prob: float, bonuses: List[str], is_dir: bool) -> float:
+    st = _strength(ai_prob, bonuses, is_dir)
     if action == "delete":
-        # Max possible: 0.60 + 0.35*0.95 = 0.9325  →  well below 1.0
-        raw = 0.60 + 0.35 * strength
+        raw = 0.58 + 0.34 * st      # max: 0.58 + 0.306 = 0.886
     elif action == "flag":
-        # Range: [0.41, 0.59]
-        raw = 0.40 + 0.20 * strength
-    else:  # skip
-        # SKIP is correct for low-confidence; penalise for high-confidence bloat
-        penalty = strength * 0.80
-        raw = max(0.12, 0.40 - penalty)
-
-    return _clamp_open_interval(raw)
+        raw = 0.38 + 0.18 * st      # max: 0.38 + 0.162 = 0.542
+    else:                            # skip
+        raw = max(0.10, 0.42 - 0.75 * st)
+    return _safe_score(raw)
 
 
-def _grade_recall(action: str, signals: Dict) -> float:
-    """
-    Recall task: minimise false negatives by catching all bloat.
-    Correct action: DELETE for any bloat-like signals.
-    """
-    strength = _compute_ai_strength(signals)
-
+def _score_recall(action: str, ai_prob: float, bonuses: List[str], is_dir: bool) -> float:
+    st = _strength(ai_prob, bonuses, is_dir)
     if action == "delete":
-        # Max possible: 0.50 + 0.44*0.95 = 0.918  →  below 1.0
-        raw = 0.50 + 0.44 * strength
+        raw = 0.52 + 0.40 * st      # max: 0.52 + 0.360 = 0.880
     elif action == "flag":
-        # Range: [0.37, 0.65]
-        raw = 0.35 + 0.30 * strength
-    else:  # skip
-        penalty = strength * 0.90
-        raw = max(0.06, 0.20 - penalty)
-
-    return _clamp_open_interval(raw)
+        raw = 0.33 + 0.28 * st      # max: 0.33 + 0.252 = 0.582
+    else:                            # skip
+        raw = max(0.07, 0.22 - 0.85 * st)
+    return _safe_score(raw)
 
 
-def _grade_f1_score(action: str, signals: Dict) -> float:
-    """
-    F1 task: balance precision and recall for robust overall triage.
-    Correct action: DELETE for obvious bloat, FLAG for marginal, SKIP for human.
-    """
-    strength = _compute_ai_strength(signals)
-
+def _score_f1(action: str, ai_prob: float, bonuses: List[str], is_dir: bool) -> float:
+    st = _strength(ai_prob, bonuses, is_dir)
     if action == "delete":
-        # Max possible: 0.55 + 0.38*0.95 = 0.911  →  below 1.0
-        raw = 0.55 + 0.38 * strength
+        raw = 0.54 + 0.36 * st      # max: 0.54 + 0.324 = 0.864
     elif action == "flag":
-        # Range: [0.46, 0.69]
-        raw = 0.45 + 0.25 * strength
-    else:  # skip
-        penalty = strength * 0.85
-        raw = max(0.11, 0.35 - penalty)
-
-    return _clamp_open_interval(raw)
+        raw = 0.43 + 0.24 * st      # max: 0.43 + 0.216 = 0.646
+    else:                            # skip
+        raw = max(0.10, 0.36 - 0.80 * st)
+    return _safe_score(raw)
 
 
-def _grade_efficiency(action: str, signals: Dict) -> float:
-    """
-    Efficiency task: maximise bytes freed per decision under a limited budget.
-    Correct action: prioritise DELETE for large, high-confidence bloat first.
-    """
-    strength = _compute_ai_strength(signals)
-    size_bytes = float(signals.get("size_bytes", 0) or 0)
-
-    # Size bonus: large files freed = more bytes saved.
-    # Normalise to ~100MB; cap at 0.20 (reduced from 0.25) so the
-    # combined formula can never reach 1.0.
-    size_bonus = min(size_bytes / 100_000_000.0, 0.20)
-
+def _score_efficiency(action: str, ai_prob: float, bonuses: List[str], is_dir: bool, size: int) -> float:
+    st = _strength(ai_prob, bonuses, is_dir)
+    # size_bonus is capped at 0.15 so delete max = 0.54 + 0.22*0.90 + 0.15 = 0.888
+    size_bonus = min(float(size) / 100_000_000.0, 0.15)
     if action == "delete":
-        # Max possible: 0.55 + 0.22*0.95 + 0.20 = 0.959  →  below 1.0
-        raw = 0.55 + 0.22 * strength + size_bonus
+        raw = 0.54 + 0.22 * st + size_bonus
     elif action == "flag":
-        raw = 0.35 + 0.18 * strength + size_bonus * 0.40
-    else:  # skip
-        penalty = size_bonus * 0.70
-        raw = max(0.06, 0.20 - penalty)
+        raw = 0.33 + 0.16 * st + size_bonus * 0.30
+    else:                            # skip
+        raw = max(0.07, 0.22 - size_bonus * 0.60)
+    return _safe_score(raw)
 
-    return _clamp_open_interval(raw)
 
+# ---------------------------------------------------------------------------
+# Public API: grade_action  (called by grader_* and by inference.py)
+# ---------------------------------------------------------------------------
 
 def grade_action(task_id: str, action: str, signals: dict) -> float:
-    """
-    Score a single action for a given bloat-detection task and signal state.
-    Returns a float in (0.0, 1.0).
-    """
+    """Score a single agent action.  Always returns float in (0.05, 0.95)."""
     action = (action or "").lower().strip()
-    # Normalise any variant spellings the LLM might emit
-    if action not in ("delete", "flag", "skip"):
-        # Try partial match
-        for a in ("delete", "flag", "skip"):
-            if a in action:
-                action = a
-                break
-        else:
-            return 0.1  # unrecognised action — small non-zero to avoid 0-reward crashes
+    for a in ("delete", "flag", "skip"):
+        if a in action:
+            action = a
+            break
+    else:
+        action = "skip"   # safe default for unrecognised strings
 
     signals = signals or {}
+    ai_prob  = float(signals.get("ai_probability", 0.10) or 0.10)
+    is_dir   = signals.get("file_kind") == "directory"
+    size     = int(signals.get("size_bytes", 0) or 0)
 
-    raw_score = 0.5
+    # Rebuild bonus list from signal dict keys
+    bonuses = [k for k in _BONUS_WEIGHTS if signals.get(k)]
+
     if task_id == "precision":
-        raw_score = _grade_precision(action, signals)
-    elif task_id == "recall":
-        raw_score = _grade_recall(action, signals)
-    elif task_id == "f1_score":
-        raw_score = _grade_f1_score(action, signals)
-    elif task_id == "efficiency":
-        raw_score = _grade_efficiency(action, signals)
+        return _score_precision(action, ai_prob, bonuses, is_dir)
+    if task_id == "recall":
+        return _score_recall(action, ai_prob, bonuses, is_dir)
+    if task_id == "f1_score":
+        return _score_f1(action, ai_prob, bonuses, is_dir)
+    if task_id == "efficiency":
+        return _score_efficiency(action, ai_prob, bonuses, is_dir, size)
 
-    # OpenEnv requirement: scores must be strictly in (0.0, 1.0)
-    return _clamp_open_interval(raw_score)
+    return _safe_score(0.50)   # unknown task → neutral score
+
+
+# ---------------------------------------------------------------------------
+# Public API: per-task grader functions
+# ---------------------------------------------------------------------------
+
+def _run_task(task_id: str, base_url: str = "http://localhost:8000") -> float:
+    """Compute oracle score for *task_id* using its ideal actions."""
+    steps = _TASK_STEPS.get(task_id, [])
+    if not steps:
+        return _safe_score(0.50)
+
+    total = 0.0
+    for step in steps:
+        score = grade_action(
+            task_id,
+            step["ideal"],
+            {
+                "ai_probability":   step["ai_prob"],
+                "file_kind":        "directory" if step["is_dir"] else "file",
+                "size_bytes":       step["size"],
+                **{b: True for b in step["bonuses"]},
+            },
+        )
+        total += score
+
+    return _safe_score(total / len(steps))
 
 
 def grader_precision(base_url: str = "http://localhost:8000") -> float:
-    """Precision grader: oracle performance on precision task."""
-    task = TASKS["precision"]
-    scores = []
-
-    for step in task["steps"]:
-        signals = step.get("signals", {})
-        ideal_action = signals.get("ideal_action", task.get("ideal_action", "skip"))
-        score = grade_action("precision", ideal_action, signals)
-        scores.append(score)
-
-    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
+    """Oracle precision score.  Strictly in (0, 1)."""
+    return _run_task("precision", base_url)
 
 
 def grader_recall(base_url: str = "http://localhost:8000") -> float:
-    """Recall grader: oracle performance on recall task."""
-    task = TASKS["recall"]
-    scores = []
-
-    for step in task["steps"]:
-        signals = step.get("signals", {})
-        ideal_action = signals.get("ideal_action", task.get("ideal_action", "skip"))
-        score = grade_action("recall", ideal_action, signals)
-        scores.append(score)
-
-    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
+    """Oracle recall score.  Strictly in (0, 1)."""
+    return _run_task("recall", base_url)
 
 
 def grader_f1_score(base_url: str = "http://localhost:8000") -> float:
-    """F1 grader: oracle performance on f1_score task."""
-    task = TASKS["f1_score"]
-    scores = []
-
-    for step in task["steps"]:
-        signals = step.get("signals", {})
-        ideal_action = signals.get("ideal_action", task.get("ideal_action", "skip"))
-        score = grade_action("f1_score", ideal_action, signals)
-        scores.append(score)
-
-    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
+    """Oracle F1 score.  Strictly in (0, 1)."""
+    return _run_task("f1_score", base_url)
 
 
 def grader_efficiency(base_url: str = "http://localhost:8000") -> float:
-    """Efficiency grader: oracle performance on efficiency task."""
-    task = TASKS["efficiency"]
-    scores = []
-
-    for step in task["steps"]:
-        signals = step.get("signals", {})
-        ideal_action = signals.get("ideal_action", task.get("ideal_action", "skip"))
-        score = grade_action("efficiency", ideal_action, signals)
-        scores.append(score)
-
-    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
+    """Oracle efficiency score.  Strictly in (0, 1)."""
+    return _run_task("efficiency", base_url)
 
 
 def run_all_graders(base_url: str = "http://localhost:8000") -> Dict[str, float]:
+    """Return all four task scores as a dict."""
     return {
-        "precision": grader_precision(base_url),
-        "recall": grader_recall(base_url),
-        "f1_score": grader_f1_score(base_url),
+        "precision":  grader_precision(base_url),
+        "recall":     grader_recall(base_url),
+        "f1_score":   grader_f1_score(base_url),
         "efficiency": grader_efficiency(base_url),
     }
+
+
+# ---------------------------------------------------------------------------
+# Self-test — run with:  python tasks/graders.py
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+    results = run_all_graders()
+    ok = True
+    for name, score in results.items():
+        in_range = 0.0 < score < 1.0
+        status = "PASS" if in_range else "FAIL"
+        print(f"  {status}  {name}: {score}")
+        if not in_range:
+            ok = False
+
+    # Also test every combination exhaustively
+    all_actions = ["delete", "flag", "skip"]
+    fail_count = 0
+    for tid, steps in _TASK_STEPS.items():
+        for i, step in enumerate(steps):
+            for act in all_actions:
+                signals = {
+                    "ai_probability": step["ai_prob"],
+                    "file_kind": "directory" if step["is_dir"] else "file",
+                    "size_bytes": step["size"],
+                    **{b: True for b in step["bonuses"]},
+                }
+                s = grade_action(tid, act, signals)
+                if not (0.0 < s < 1.0):
+                    print(f"  FAIL  grade_action({tid!r},{act!r}) = {s!r}")
+                    fail_count += 1
+
+    if fail_count == 0 and ok:
+        print(f"\n  All scores verified strictly in (0, 1). Ready to submit.")
+        sys.exit(0)
+    else:
+        print(f"\n  {fail_count} score(s) out of range!")
+        sys.exit(1)
