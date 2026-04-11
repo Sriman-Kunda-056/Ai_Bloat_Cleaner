@@ -12,6 +12,11 @@ from .definitions import TASKS
 # ---------------------------------------------------------------------------
 
 
+def _clamp_open_interval(score: float, eps: float = 0.001) -> float:
+    """Clamp score to the strict open interval (0, 1) with stable rounding."""
+    return round(min(max(float(score), eps), 1.0 - eps), 3)
+
+
 def _compute_ai_strength(signals: Dict) -> float:
     """
     Compute composite bloat signal strength.
@@ -153,7 +158,7 @@ def grade_action(task_id: str, action: str, signals: dict) -> float:
         raw_score = _grade_efficiency(action, signals)
 
     # OpenEnv requirement: scores must be strictly in (0.0, 1.0)
-    return round(min(max(raw_score, 0.01), 0.99), 3)
+    return _clamp_open_interval(raw_score)
 
 
 def grader_precision(base_url: str = "http://localhost:8000") -> float:
@@ -167,7 +172,7 @@ def grader_precision(base_url: str = "http://localhost:8000") -> float:
         score = grade_action("precision", ideal_action, signals)
         scores.append(score)
 
-    return round(sum(scores) / len(scores) if scores else 0.5, 3)
+    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
 
 
 def grader_recall(base_url: str = "http://localhost:8000") -> float:
@@ -181,7 +186,7 @@ def grader_recall(base_url: str = "http://localhost:8000") -> float:
         score = grade_action("recall", ideal_action, signals)
         scores.append(score)
 
-    return round(sum(scores) / len(scores) if scores else 0.5, 3)
+    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
 
 
 def grader_f1_score(base_url: str = "http://localhost:8000") -> float:
@@ -195,7 +200,7 @@ def grader_f1_score(base_url: str = "http://localhost:8000") -> float:
         score = grade_action("f1_score", ideal_action, signals)
         scores.append(score)
 
-    return round(sum(scores) / len(scores) if scores else 0.5, 3)
+    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
 
 
 def grader_efficiency(base_url: str = "http://localhost:8000") -> float:
@@ -209,7 +214,7 @@ def grader_efficiency(base_url: str = "http://localhost:8000") -> float:
         score = grade_action("efficiency", ideal_action, signals)
         scores.append(score)
 
-    return round(sum(scores) / len(scores) if scores else 0.5, 3)
+    return _clamp_open_interval(sum(scores) / len(scores) if scores else 0.5)
 
 
 def run_all_graders(base_url: str = "http://localhost:8000") -> Dict[str, float]:
