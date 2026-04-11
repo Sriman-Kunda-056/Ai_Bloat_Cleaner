@@ -577,16 +577,25 @@ def _build_queue(workspace: Path, ground_truth: Dict[str, bool]) -> List[Tuple[F
 # Reward constants
 # ---------------------------------------------------------------------------
 
-REWARD_TRUE_POSITIVE  = +1.00   # delete + AI bloat
-REWARD_FALSE_POSITIVE = -2.00   # delete + human file
-REWARD_FLAG_TP        = +0.40   # flag   + AI bloat
-REWARD_FLAG_FP        = -0.40   # flag   + human file
-REWARD_TRUE_NEGATIVE  = +0.30   # skip   + human file
-REWARD_FALSE_NEGATIVE = -0.30   # skip   + AI bloat
-F1_BONUS_MAX          = +3.00   # maximum terminal bonus for perfect F1
+REWARD_TRUE_POSITIVE  = +0.90   # delete + AI bloat  (was 1.00, violated strict (0,1))
+REWARD_FALSE_POSITIVE = +0.05   # delete + human file (was -2.00, violated [0,1])
+REWARD_FLAG_TP        = +0.60   # flag   + AI bloat
+REWARD_FLAG_FP        = +0.20   # flag   + human file (was -0.40, violated [0,1])
+REWARD_TRUE_NEGATIVE  = +0.70   # skip   + human file
+REWARD_FALSE_NEGATIVE = +0.10   # skip   + AI bloat   (was -0.30, violated [0,1])
+F1_BONUS_MAX          = +0.05   # small terminal bonus for perfect F1 (was 3.0 — blew past 1.0)
 
 # Small process-quality shaping: rewards how well an action matches confidence.
-PROCESS_ALIGNMENT_WEIGHT = 0.25
+PROCESS_ALIGNMENT_WEIGHT = 0.05  # was 0.25 — combined with base rewards could exceed 1.0
+
+
+def _clamp_reward(r: float) -> float:
+    """Clamp a step reward to the strict open interval (0.01, 0.99).
+
+    OpenEnv requires reward_range [0.0, 1.0] with open-interval task scores.
+    This helper is applied to every reward returned from /step.
+    """
+    return round(min(max(float(r), 0.01), 0.99), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +684,7 @@ class AiBloatDetectorEnvironment(Environment):
         #  Compute reward 
         base_reward, result_msg = self._compute_reward(act, fp, is_bloat)
         process_bonus, process_msg = self._process_reward(act, fp)
-        reward = round(base_reward + process_bonus, 4)
+        reward = _clamp_reward(base_reward + process_bonus)
         self._reward_total = round(self._reward_total + reward, 4)
         self._process_score_total = round(self._process_score_total + process_bonus, 4)
         self._process_steps += 1
@@ -813,7 +822,7 @@ class AiBloatDetectorEnvironment(Environment):
     ) -> BloatObservation:
         prec, rec, f1 = self._metrics()
         f1_bonus = round(F1_BONUS_MAX * f1, 4)
-        total_reward = extra_reward + f1_bonus
+        total_reward = _clamp_reward(extra_reward + f1_bonus)
         process_avg = round(self._process_score_total / max(self._process_steps, 1), 4)
         reward_total_with_bonus = round(self._reward_total + f1_bonus, 4)
 

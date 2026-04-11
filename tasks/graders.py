@@ -11,17 +11,28 @@ from .definitions import TASKS
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Use a generous epsilon so floating-point rounding can never produce 0.0 or 1.0
+_EPS = 0.01
+_MAX = 1.0 - _EPS   # 0.99  — never reach 1.0
+_MIN = _EPS          # 0.01  — never reach 0.0
 
-def _clamp_open_interval(score: float, eps: float = 0.001) -> float:
-    """Clamp score to the strict open interval (0, 1) with stable rounding."""
-    return round(min(max(float(score), eps), 1.0 - eps), 3)
+
+def _clamp_open_interval(score: float) -> float:
+    """Clamp score to the strict open interval (0, 1).
+
+    The interval is (_EPS, 1-_EPS) = (0.01, 0.99), which guarantees the
+    score can never equal the boundary values 0.0 or 1.0 even after
+    floating-point rounding.
+    """
+    return round(min(max(float(score), _MIN), _MAX), 4)
 
 
 def _compute_ai_strength(signals: Dict) -> float:
     """
     Compute composite bloat signal strength.
     Combines ai_probability with binary signal indicators.
-    Returns [0.0, 1.0].
+    Returns a value clamped to [0.05, 0.95] so downstream formulas
+    can never push a score to exactly 0 or 1.
     """
     strength = float(signals.get("ai_probability", 0.05) or 0.05)
 
@@ -45,7 +56,9 @@ def _compute_ai_strength(signals: Dict) -> float:
     if signals.get("file_kind") == "directory":
         strength += 0.04
 
-    return min(0.99, strength)
+    # Clamp to [0.05, 0.95] — wide enough to be meaningful, narrow enough
+    # so that *any* downstream linear formula stays away from 0 and 1.
+    return min(0.95, max(0.05, strength))
 
 
 def _grade_precision(action: str, signals: Dict) -> float:
@@ -56,15 +69,17 @@ def _grade_precision(action: str, signals: Dict) -> float:
     strength = _compute_ai_strength(signals)
 
     if action == "delete":
-        # Reward DELETE, but only if confidence is high
-        return round(min(0.65 + 0.35 * strength, 1.0), 3)
+        # Max possible: 0.60 + 0.35*0.95 = 0.9325  →  well below 1.0
+        raw = 0.60 + 0.35 * strength
     elif action == "flag":
-        # Moderate credit for uncertain cases
-        return round(0.40 + 0.20 * strength, 3)
+        # Range: [0.41, 0.59]
+        raw = 0.40 + 0.20 * strength
     else:  # skip
-        # SKIP is correct for low-confidence files (avoid false positives)
-        penalty = strength * 0.80  # penalise skipping high-confidence bloat
-        return round(max(0.10, 0.40 - penalty), 3)
+        # SKIP is correct for low-confidence; penalise for high-confidence bloat
+        penalty = strength * 0.80
+        raw = max(0.12, 0.40 - penalty)
+
+    return _clamp_open_interval(raw)
 
 
 def _grade_recall(action: str, signals: Dict) -> float:
@@ -75,15 +90,16 @@ def _grade_recall(action: str, signals: Dict) -> float:
     strength = _compute_ai_strength(signals)
 
     if action == "delete":
-        # Strong reward for deleting anything with bloat signals
-        return round(min(0.55 + 0.45 * strength, 1.0), 3)
+        # Max possible: 0.50 + 0.44*0.95 = 0.918  →  below 1.0
+        raw = 0.50 + 0.44 * strength
     elif action == "flag":
-        # Partial credit for marking uncertain cases
-        return round(0.35 + 0.30 * strength, 3)
+        # Range: [0.37, 0.65]
+        raw = 0.35 + 0.30 * strength
     else:  # skip
-        # Penalise skipping potential bloat
         penalty = strength * 0.90
-        return round(max(0.05, 0.20 - penalty), 3)
+        raw = max(0.06, 0.20 - penalty)
+
+    return _clamp_open_interval(raw)
 
 
 def _grade_f1_score(action: str, signals: Dict) -> float:
@@ -94,15 +110,16 @@ def _grade_f1_score(action: str, signals: Dict) -> float:
     strength = _compute_ai_strength(signals)
 
     if action == "delete":
-        # Reward DELETE with strength-dependent scoring
-        return round(min(0.60 + 0.40 * strength, 1.0), 3)
+        # Max possible: 0.55 + 0.38*0.95 = 0.911  →  below 1.0
+        raw = 0.55 + 0.38 * strength
     elif action == "flag":
-        # FLAG gets moderate rewards across all certainty levels
-        return round(0.45 + 0.25 * strength, 3)
+        # Range: [0.46, 0.69]
+        raw = 0.45 + 0.25 * strength
     else:  # skip
-        # SKIP is OK for low-confidence, but penalise for high-confidence bloat
         penalty = strength * 0.85
-        return round(max(0.10, 0.35 - penalty), 3)
+        raw = max(0.11, 0.35 - penalty)
+
+    return _clamp_open_interval(raw)
 
 
 def _grade_efficiency(action: str, signals: Dict) -> float:
@@ -113,20 +130,21 @@ def _grade_efficiency(action: str, signals: Dict) -> float:
     strength = _compute_ai_strength(signals)
     size_bytes = float(signals.get("size_bytes", 0) or 0)
 
-    # Size bonus: large files freed = more bytes saved
-    # Normalise to ~100MB as typical large bloat (node_modules, dist, venv)
-    size_bonus = min(size_bytes / 100_000_000.0, 0.25)
+    # Size bonus: large files freed = more bytes saved.
+    # Normalise to ~100MB; cap at 0.20 (reduced from 0.25) so the
+    # combined formula can never reach 1.0.
+    size_bonus = min(size_bytes / 100_000_000.0, 0.20)
 
     if action == "delete":
-        # Strong reward for DELETE, especially large high-confidence bloat
-        return round(min(0.60 + 0.25 * strength + size_bonus, 1.0), 3)
+        # Max possible: 0.55 + 0.22*0.95 + 0.20 = 0.959  →  below 1.0
+        raw = 0.55 + 0.22 * strength + size_bonus
     elif action == "flag":
-        # Partial credit for flagging (less bytes freed than delete)
-        return round(0.35 + 0.20 * strength + size_bonus * 0.40, 3)
+        raw = 0.35 + 0.18 * strength + size_bonus * 0.40
     else:  # skip
-        # Penalise skipping large bloat files
         penalty = size_bonus * 0.70
-        return round(max(0.05, 0.20 - penalty), 3)
+        raw = max(0.06, 0.20 - penalty)
+
+    return _clamp_open_interval(raw)
 
 
 def grade_action(task_id: str, action: str, signals: dict) -> float:
