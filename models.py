@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 class BloatAction(BaseModel):
     """Action submitted by the agent at each step."""
     action_type: str = Field(
-        ...,
-        description="One of: 'delete', 'flag', 'skip', or 'done'.",
+        default="skip",
+        description="One of: 'delete', 'flag', 'skip', or 'done'. Defaults to 'skip'.",
     )
 
 
