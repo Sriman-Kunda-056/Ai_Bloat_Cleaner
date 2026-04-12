@@ -23,8 +23,12 @@ Usage:
     python -m server.app
 """
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+try:
+    from openenv.core.env_server.http_server import create_app
+except Exception as e:  # pragma: no cover
+    raise ImportError(
+        "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
+    ) from e
 
 try:
     from ..models import BloatAction, BloatObservation
@@ -34,51 +38,13 @@ except ImportError:
     from server.environment import AiBloatDetectorEnvironment
 
 
-# Create the app directly without openenv wrapper to avoid parsing issues
-app = FastAPI(title="AI Bloat Detector")
-_env = AiBloatDetectorEnvironment()
-
-
-@app.get("/")
-def health():
-    """Health check endpoint."""
-    return {"status": "ok", "env": "ai_bloat_detector"}
-
-
-@app.post("/reset")
-def reset():
-    """Reset the environment and start a new episode."""
-    obs = _env.reset()
-    return obs.model_dump()
-
-
-@app.post("/step")
-def step(action: BloatAction):
-    """Execute one action in the environment."""
-    obs = _env.step(action)
-    return obs.model_dump()
-
-
-@app.get("/state")
-def state():
-    """Get the current environment state."""
-    return _env.state
-
-
-# Web interface routes for Hugging Face Spaces base_path=/web
-@app.get("/web")
-def web_entry():
-    return {
-        "name": "ai_bloat_detector",
-        "status": "ok",
-        "message": "Space web entrypoint is available.",
-        "endpoints": ["/", "/reset", "/step", "/state"],
-    }
-
-
-@app.get("/web/")
-def web_entry_slash():
-    return web_entry()
+app = create_app(
+    AiBloatDetectorEnvironment,
+    BloatAction,
+    BloatObservation,
+    env_name="ai_bloat_detector",
+    max_concurrent_envs=1,
+)
 
 
 def main():

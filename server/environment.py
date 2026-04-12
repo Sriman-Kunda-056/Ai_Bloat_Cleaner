@@ -33,11 +33,11 @@ except ImportError:
         pass
 
 try:
-    from ..models import BloatAction, BloatObservation, FileFingerprint, FileSignal
+    from ..models import BloatAction, BloatObservation, BloatState, FileFingerprint, FileSignal
 except ImportError:
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-    from models import BloatAction, BloatObservation, FileFingerprint, FileSignal
+    from models import BloatAction, BloatObservation, BloatState, FileFingerprint, FileSignal
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +157,7 @@ class AiBloatDetectorEnvironment(Environment):
             observation_text=_make_observation_text(first, 0, len(self._queue)),
             step_count=0,
             queue_remaining=len(self._queue),
+            reward=0.0,
             done=False,
         )
         self._last_obs = obs
@@ -221,6 +222,7 @@ class AiBloatDetectorEnvironment(Environment):
             last_action=act,
             last_reward=reward,
             last_result=result,
+            reward=reward,
             true_positives=self._tp,
             false_positives=self._fp,
             true_negatives=self._tn,
@@ -231,17 +233,17 @@ class AiBloatDetectorEnvironment(Environment):
         return obs
 
     @property
-    def state(self) -> dict:
-        return {
-            "episode_id": self._episode_id,
-            "step_count": self._step,
-            "queue_remaining": max(0, len(self._queue) - self._index),
-            "bytes_freed": self._bytes_freed,
-            "true_positives": self._tp,
-            "false_positives": self._fp,
-            "true_negatives": self._tn,
-            "false_negatives": self._fn,
-        }
+    def state(self) -> BloatState:
+        return BloatState(
+            episode_id=self._episode_id,
+            step_count=self._step,
+            queue_remaining=max(0, len(self._queue) - self._index),
+            bytes_freed=self._bytes_freed,
+            true_positives=self._tp,
+            false_positives=self._fp,
+            true_negatives=self._tn,
+            false_negatives=self._fn,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -289,6 +291,7 @@ class AiBloatDetectorEnvironment(Environment):
             last_action=None,
             last_reward=last_reward,
             last_result=last_result,
+            reward=last_reward,
             true_positives=self._tp,
             false_positives=self._fp,
             true_negatives=self._tn,

@@ -45,6 +45,7 @@ class BloatObservation(BaseModel):
     last_action: Optional[str] = None
     last_reward: float = 0.0
     last_result: str = ""
+    reward: float = 0.0
 
     # Running metrics
     true_positives: int = 0
@@ -55,3 +56,15 @@ class BloatObservation(BaseModel):
     # Terminal flag
     done: bool = False
     episode_summary: Optional[Dict[str, Any]] = None
+
+
+class BloatState(BaseModel):
+    """Serializable environment state exposed to the playground."""
+    episode_id: str = ""
+    step_count: int = 0
+    queue_remaining: int = 0
+    bytes_freed: int = 0
+    true_positives: int = 0
+    false_positives: int = 0
+    true_negatives: int = 0
+    false_negatives: int = 0
