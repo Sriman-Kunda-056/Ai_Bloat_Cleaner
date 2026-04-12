@@ -231,17 +231,17 @@ class AiBloatDetectorEnvironment(Environment):
         return obs
 
     @property
-    def state(self) -> State:
-        s = State()
-        s["episode_id"] = self._episode_id
-        s["step_count"] = self._step
-        s["queue_remaining"] = max(0, len(self._queue) - self._index)
-        s["bytes_freed"] = self._bytes_freed
-        s["true_positives"] = self._tp
-        s["false_positives"] = self._fp
-        s["true_negatives"] = self._tn
-        s["false_negatives"] = self._fn
-        return s
+    def state(self) -> dict:
+        return {
+            "episode_id": self._episode_id,
+            "step_count": self._step,
+            "queue_remaining": max(0, len(self._queue) - self._index),
+            "bytes_freed": self._bytes_freed,
+            "true_positives": self._tp,
+            "false_positives": self._fp,
+            "true_negatives": self._tn,
+            "false_negatives": self._fn,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
