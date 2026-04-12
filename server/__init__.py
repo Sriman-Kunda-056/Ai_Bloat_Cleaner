@@ -1,7 +1,4 @@
-
-
-"""AI Digital Bloat Detector - server components."""
-
-from .my_env_environment import AiBloatDetectorEnvironment
+"""AI Bloat Detector -- server package."""
+from .environment import AiBloatDetectorEnvironment
 
 __all__ = ["AiBloatDetectorEnvironment"]

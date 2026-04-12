@@ -1,26 +1,8 @@
-# Never bake secrets into the image
-.env
-.env.*
-*.env
-
-# Python bytecode — rebuilt inside the container
-__pycache__/
-*.py[cod]
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# Virtual envs — dependencies are installed by uv inside Docker
-.venv/
-venv/
-
-# Dev / IDE artifacts
-.git/
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
 .gitignore
-.idea/
-.vscode/
-*.swp
-
-# Docs and local scripts not needed at runtime
-*.md
+*.egg-info
+outputs/
+.env

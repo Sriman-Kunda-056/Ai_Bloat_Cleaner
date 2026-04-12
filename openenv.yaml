@@ -1,10 +1,9 @@
 spec_version: 1
 name: ai_bloat_detector
 description: >
-  An OpenEnv-compliant environment for AI bloat-ware detection in developer
-  workspaces. The agent receives structured file forensics (metadata,
-  content-type checks, AI signals, and ai_probability) and must decide
-  whether to delete, flag, or skip each item.
+  An RL environment where an agent inspects developer workspace files and
+  decides whether to delete (AI-generated bloat), flag (uncertain), or
+  skip (human-authored). Rewards correct triage decisions.
 version: "1.0.0"
 author: DaddyCoder70
 type: space
@@ -15,8 +14,7 @@ port: 8000
 observation_space:
   type: structured
   description: >
-    FileFingerprint observation with path, file metadata, AI forensic signals,
-    and ai_probability score.
+    FileFingerprint with path, size, ai_probability, and forensic signals.
 
 action_space:
   type: discrete
@@ -25,8 +23,7 @@ action_space:
     - flag
     - skip
   description: >
-    delete removes likely AI-generated bloat, flag marks uncertain files for
-    review, and skip preserves likely human-authored files.
+    delete removes AI bloat, flag marks uncertain files, skip preserves human files.
 
 endpoints:
   health: /
@@ -37,26 +34,24 @@ endpoints:
 tasks:
   - id: precision
     description: >
-      Minimize false positives by deleting only highly confident bloat files.
-      Correct behavior: avoid deleting human files.
+      Minimize false positives: delete only high-confidence AI bloat,
+      never delete human files.
     grader: grader_precision
 
   - id: recall
     description: >
-      Minimize false negatives by catching all true bloat files.
-      Correct behavior: avoid missing bloat artifacts.
+      Minimize false negatives: catch every AI bloat artifact,
+      never miss obvious bloat.
     grader: grader_recall
 
   - id: f1_score
     description: >
       Balance precision and recall for robust overall triage quality.
-      Correct behavior: maintain both low false positives and low false negatives.
     grader: grader_f1_score
 
   - id: efficiency
     description: >
-      Maximize bytes freed per decision under a constrained action budget.
-      Correct behavior: prioritize large high-confidence bloat first.
+      Maximize bytes freed per step by targeting large high-confidence bloat first.
     grader: grader_efficiency
 
 scoring:
