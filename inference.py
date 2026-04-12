@@ -90,6 +90,12 @@ def _http_get(url: str) -> dict:
     with urllib.request.urlopen(url, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
+
+def _probe_server(url: str) -> None:
+    """Verify the server is reachable without assuming a JSON response."""
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        resp.read()
+
 # ---------------------------------------------------------------------------
 # Decision helpers
 # ---------------------------------------------------------------------------
@@ -239,7 +245,10 @@ async def run_task(client, task_name: str) -> None:
 async def main() -> None:
     # Verify the environment server is up before doing anything else
     try:
-        _http_get(f"{ENV_URL}/")
+        try:
+            _probe_server(f"{ENV_URL}/health")
+        except Exception:
+            _probe_server(f"{ENV_URL}/")
         print(f"[INFO] Environment server: {ENV_URL}", flush=True)
     except Exception as e:
         print(f"[ERROR] Cannot reach environment at {ENV_URL}: {e}",
