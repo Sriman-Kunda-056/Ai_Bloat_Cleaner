@@ -28,7 +28,7 @@ recall, with heavy penalties for destroying real human work.
 ![API](https://img.shields.io/badge/API_endpoints-4-2ea44f)
 ![Status](https://img.shields.io/badge/status-safety_prototype-f59e0b)
 
-## At a glance
+## Evidence at a glance
 
 | Verified from the tracked code | Count |
 | --- | ---: |
@@ -38,7 +38,13 @@ recall, with heavy penalties for destroying real human work.
 | Evaluation task definitions | **4** |
 | FastAPI endpoints | **4** |
 
-## Environment preview
+## Preview
+
+No reviewed agent-run screenshot is published because filesystem paths may
+contain private workspace information. The GitHub-rendered flow below is the
+safe repository preview.
+
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -71,7 +77,7 @@ flowchart LR
 
 > **HF Spaces**: `HF_TOKEN` is injected automatically — no secrets to configure.
 
-## The Problem
+## What it does
 
 Modern AI coding agents (Cursor, GitHub Copilot, Claude Code, etc.) leave
 behind a trail of digital waste:
@@ -88,6 +94,8 @@ behind a trail of digital waste:
 ## Quick Start
 
 ```bash
+git clone https://github.com/Sriman-Kunda-056/Ai_Bloat_Cleaner.git
+cd Ai_Bloat_Cleaner
 uv sync --frozen
 uv run uvicorn server.app:app --reload
 
@@ -178,7 +186,7 @@ docker run -p 8000:8000 ai-bloat-detector
 uvicorn server.app:app --reload
 ```
 
-## Project Structure
+## Repository layout
 
 ```
 Ai_Bloat_Cleaner/
@@ -194,3 +202,42 @@ Ai_Bloat_Cleaner/
 │   └── reward.py              # Reward calculation
 └── tasks/                     # Task definitions and graders
 ```
+
+## Tests and validation
+
+The repository includes two executable endpoint smoke scripts:
+
+```bash
+uv run python test_default_action.py
+uv run python test_endpoints.py
+```
+
+They exercise reset, step, state, and default-action behavior, but print results
+instead of asserting them. They are smoke checks, not a measured RL benchmark or
+a complete automated regression suite.
+
+## Limitations
+
+- The labeled workspace is synthetic and does not represent the full variety of
+  real developer repositories.
+- Deleting files outside the generated temporary workspace has not been reviewed
+  as safe and can destroy human work.
+- The fixed root-grader values are placeholders, not trained-agent performance.
+- Filesystem permissions, symlinks, race conditions, and adversarial paths need
+  additional hardening before any real cleanup use.
+
+## Numbered commit history
+
+1. `Initial` - import the original OpenEnv prototype.
+2. `01` - document verified signals, actions, safety boundaries, and structure.
+3. `02` - standardize the evidence-first GitHub README format.
+
+## Suggested GitHub topics
+
+`reinforcement-learning` `openenv` `ai-safety` `filesystem`
+`digital-forensics` `fastapi` `pydantic` `ai-agents`
+
+## License and attribution
+
+No repository-wide license file is included. OpenEnv, FastAPI, Pydantic, and
+other dependencies remain subject to their respective licenses.
