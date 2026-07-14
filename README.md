@@ -22,6 +22,43 @@ An RL environment that trains an agent to forensically scan a developer workspac
 identify AI-generated bloat, and delete it  earning rewards for precision and
 recall, with heavy penalties for destroying real human work.
 
+![Signals](https://img.shields.io/badge/forensic_signals-10-2563eb)
+![Actions](https://img.shields.io/badge/actions-4-7c3aed)
+![Synthetic cases](https://img.shields.io/badge/synthetic_cases-16-0ea5e9)
+![API](https://img.shields.io/badge/API_endpoints-4-2ea44f)
+![Status](https://img.shields.io/badge/status-safety_prototype-f59e0b)
+
+## At a glance
+
+| Verified from the tracked code | Count |
+| --- | ---: |
+| Forensic signal types | **10** |
+| Agent actions: delete, flag, skip, done | **4** |
+| Synthetic labeled cases | **16** |
+| Evaluation task definitions | **4** |
+| FastAPI endpoints | **4** |
+
+## Environment preview
+
+```mermaid
+flowchart LR
+    S["Synthetic temporary workspace"] --> F["File fingerprint<br/>10 signal types"]
+    F --> A{"Agent action"}
+    A --> D["Delete"]
+    A --> G["Flag"]
+    A --> K["Skip"]
+    A --> X["Done"]
+    D --> R["Precision-weighted reward"]
+    G --> R
+    K --> R
+    X --> R
+```
+
+> **Safety and evidence:** the environment is intended to operate only on its
+> generated temporary workspace. Audit path and symlink boundaries before using
+> any real files. Values returned by the root `tasks.py` grader are fixed
+> placeholders, not measured model performance.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -30,7 +67,7 @@ recall, with heavy penalties for destroying real human work.
 | `OPENAI_API_KEY` | Alternative to `HF_TOKEN` | — | OpenAI key (use when pointing `API_BASE_URL` at OpenAI) |
 | `API_BASE_URL` | No | `https://router.huggingface.co/v1` (HF) / `https://api.openai.com/v1` (OpenAI) | LLM endpoint (any OpenAI-compatible API) |
 | `MODEL_NAME` | No | `Qwen/Qwen2.5-72B-Instruct` (HF) / `gpt-4o-mini` (OpenAI) | Model identifier |
-| `BLOAT_DETECTOR_URL` | No | `http://localhost:8000` | URL of the running environment server |
+| `ENV_URL` | No | `http://localhost:8000` | URL used by `inference.py` for the running environment server |
 
 > **HF Spaces**: `HF_TOKEN` is injected automatically — no secrets to configure.
 
@@ -50,23 +87,12 @@ behind a trail of digital waste:
 
 ## Quick Start
 
-```python
-from my_env import AiBloatDetector, BloatAction
+```bash
+uv sync --frozen
+uv run uvicorn server.app:app --reload
 
-with AiBloatDetector(base_url="http://localhost:8000") as env:
-    result = env.reset()
-
-    while not result.observation.done:
-        item = result.observation.current_item
-
-        # Your RL policy here  use ai_probability and ai_signals
-        action = BloatAction(
-            action_type="delete" if item.ai_probability > 0.6 else "skip"
-        )
-        result = env.step(action)
-
-    summary = result.observation.episode_summary
-    print(f"F1={summary['f1_score']:.3f}  Bytes freed={summary['bytes_freed']:,}")
+# In another terminal
+uv run python inference.py
 ```
 
 ## Action Space
@@ -143,10 +169,10 @@ Items are shuffled on each reset so the agent cannot exploit order.
 
 ```bash
 # Build Docker image
-docker build -t ai_bloat_detector-env:latest -f server/Dockerfile .
+docker build -t ai-bloat-detector .
 
 # Run server
-docker run -p 8000:8000 ai_bloat_detector-env:latest
+docker run -p 8000:8000 ai-bloat-detector
 
 # Or locally with uvicorn
 uvicorn server.app:app --reload
@@ -155,13 +181,16 @@ uvicorn server.app:app --reload
 ## Project Structure
 
 ```
-my_env/
- __init__.py                    # Exports: AiBloatDetector, BloatAction, BloatObservation
- models.py                      # BloatAction, BloatObservation, FileFingerprint, AISignal
- client.py                      # AiBloatDetector WebSocket client
- openenv.yaml                   # OpenEnv manifest
- pyproject.toml                 # Package metadata
- server/
-     my_env_environment.py      # AiBloatDetectorEnvironment (core logic)
-     app.py                     # FastAPI HTTP + WebSocket server
+Ai_Bloat_Cleaner/
+├── models.py                  # Action, observation, fingerprint models
+├── client.py                  # Environment client
+├── inference.py               # Example policy/inference loop
+├── openenv.yaml               # OpenEnv manifest
+├── pyproject.toml             # Package metadata
+├── server/
+│   ├── app.py                 # FastAPI server
+│   ├── environment.py         # Environment lifecycle
+│   ├── triage_env.py          # Filesystem triage environment
+│   └── reward.py              # Reward calculation
+└── tasks/                     # Task definitions and graders
 ```
